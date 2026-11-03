@@ -140,21 +140,26 @@ endfunction
 
 function! s:set_lines(buf, lines) abort
   if !bufexists(a:buf)
-    return
+    return 0
+  endif
+
+  let target = empty(a:lines) ? [''] : a:lines
+  let current = getbufline(a:buf, 1, '$')
+  if current ==# target
+    return 0
   endif
 
   let was_modifiable = getbufvar(a:buf, '&modifiable')
   call setbufvar(a:buf, '&modifiable', 1)
   try
-    silent call deletebufline(a:buf, 1, '$')
-    if empty(a:lines)
-      call setbufline(a:buf, 1, '')
-    else
-      call setbufline(a:buf, 1, a:lines)
+    call setbufline(a:buf, 1, target)
+    if len(current) > len(target)
+      silent call deletebufline(a:buf, len(target) + 1, '$')
     endif
   finally
     call setbufvar(a:buf, '&modifiable', was_modifiable ? 1 : 0)
   endtry
+  return 1
 endfunction
 
 function! s:win_exists(winid) abort
@@ -314,6 +319,7 @@ function! s:init_list_buffer(state, kind) abort
   call s:map_fixed('<Up>', ':<C-u>call ' . s:sid . 'move_cursor(-1)<CR>')
   call s:map_fixed('J', ':<C-u>call ' . s:sid . 'scroll_diff(1)<CR>')
   call s:map_fixed('K', ':<C-u>call ' . s:sid . 'scroll_diff(-1)<CR>')
+  call s:map_keys('refresh', ':<C-u>call ' . s:sid . 'refresh_all()<CR>')
   call s:map_keys('cycle_next', ':<C-u>call ' . s:sid . 'cycle_pane(1)<CR>')
   call s:map_keys('cycle_prev', ':<C-u>call ' . s:sid . 'cycle_pane(-1)<CR>')
   call s:map_left_pane_keys()
@@ -322,7 +328,6 @@ function! s:init_list_buffer(state, kind) abort
   if a:kind ==# 'files'
     call s:map_keys('toggle_tree', ':<C-u>call ' . s:sid . 'toggle_tree()<CR>')
     call s:map_fixed('?', ':<C-u>call ' . s:sid . 'toggle_help()<CR>')
-    call s:map_keys('refresh', ':<C-u>call ' . s:sid . 'refresh_files()<CR>')
     call s:map_keys('stage', ':<C-u>call ' . s:sid . 'stage_current("stage")<CR>')
     call s:map_keys('unstage', ':<C-u>call ' . s:sid . 'stage_current("unstage")<CR>')
     call s:map_keys('toggle_stage', ':<C-u>call ' . s:sid . 'stage_current("toggle")<CR>')
@@ -374,6 +379,8 @@ function! s:init_branch_buffer(state) abort
   call s:map_fixed('k', ':<C-u>call ' . s:sid . 'move_cursor(-1)<CR>')
   call s:map_fixed('<Down>', ':<C-u>call ' . s:sid . 'move_cursor(1)<CR>')
   call s:map_fixed('<Up>', ':<C-u>call ' . s:sid . 'move_cursor(-1)<CR>')
+  call s:map_keys('refresh', ':<C-u>call ' . s:sid . 'refresh_all()<CR>')
+  call s:map_fixed('?', ':<C-u>call ' . s:sid . 'toggle_branch_help()<CR>')
   call s:map_keys('checkout_branch', ':<C-u>call ' . s:sid . 'checkout_branch()<CR>')
   call s:map_keys('apply_branch', ':<C-u>call ' . s:sid . 'apply_branch()<CR>')
   call s:map_keys('cycle_next', ':<C-u>call ' . s:sid . 'cycle_pane(1)<CR>')
@@ -473,6 +480,99 @@ function! s:scroll_diff_half(delta) abort
   call s:scroll_diff_by(winid, a:delta, lines_to_scroll)
 endfunction
 
+function! s:debounce_delay() abort
+  let value = get(g:, 'git_changes_debounce_ms', 300)
+  if type(value) != type(0)
+    return 300
+  endif
+  return value > 0 ? value : 0
+endfunction
+
+function! s:can_debounce() abort
+  return exists('*timer_start') && s:debounce_delay() > 0
+endfunction
+
+function! s:cancel_pending(state) abort
+  if get(a:state, 'file_timer', -1) != -1
+    call timer_stop(a:state.file_timer)
+    let a:state.file_timer = -1
+  endif
+  if get(a:state, 'commit_timer', -1) != -1
+    call timer_stop(a:state.commit_timer)
+    let a:state.commit_timer = -1
+  endif
+endfunction
+
+function! s:flush_pending(state) abort
+  if get(a:state, 'commit_timer', -1) != -1
+    call s:cancel_pending(a:state)
+    call s:apply_commit_select(a:state)
+  elseif get(a:state, 'file_timer', -1) != -1
+    call timer_stop(a:state.file_timer)
+    let a:state.file_timer = -1
+    call s:apply_file_diff(a:state)
+  endif
+endfunction
+
+function! s:schedule_file_diff(state) abort
+  if get(a:state, 'commit_timer', -1) != -1
+    return
+  endif
+  if !s:can_debounce()
+    call s:apply_file_diff(a:state)
+    return
+  endif
+  if get(a:state, 'file_timer', -1) != -1
+    call timer_stop(a:state.file_timer)
+  endif
+  let a:state.file_timer = timer_start(s:debounce_delay(),
+        \ {-> s:apply_file_diff(a:state)})
+endfunction
+
+function! s:apply_file_diff(state) abort
+  let a:state.file_timer = -1
+  if !s:state_alive(a:state)
+    return
+  endif
+  if a:state.commit_index < 0 || a:state.commit_index >= len(a:state.commits)
+    return
+  endif
+  if a:state.file_index < 0 || a:state.file_index >= len(a:state.files)
+    return
+  endif
+  call s:show_diff(a:state, a:state.files[a:state.file_index])
+endfunction
+
+function! s:schedule_commit_select(state, index) abort
+  let a:state.commit_index = a:index
+  if get(a:state, 'file_timer', -1) != -1
+    call timer_stop(a:state.file_timer)
+    let a:state.file_timer = -1
+  endif
+  if !s:can_debounce()
+    call s:apply_commit_select(a:state)
+    return
+  endif
+  if get(a:state, 'commit_timer', -1) != -1
+    call timer_stop(a:state.commit_timer)
+  endif
+  let a:state.commit_timer = timer_start(s:debounce_delay(),
+        \ {-> s:apply_commit_select(a:state)})
+endfunction
+
+function! s:apply_commit_select(state) abort
+  let a:state.commit_timer = -1
+  if !s:state_alive(a:state)
+    return
+  endif
+  let index = a:state.commit_index
+  if index < 0 || index >= len(a:state.commits)
+    return
+  endif
+  call s:cancel_pending(a:state)
+  call s:select_commit(a:state, index)
+endfunction
+
 function! s:on_files_cursor_moved() abort
   let state = s:cur_state()
   if empty(state) || get(state, 'updating', 0)
@@ -489,7 +589,7 @@ function! s:on_files_cursor_moved() abort
   endif
 
   let state.file_index = index
-  call s:show_diff(state, state.files[index])
+  call s:schedule_file_diff(state)
 endfunction
 
 function! s:on_commits_cursor_moved() abort
@@ -503,7 +603,7 @@ function! s:on_commits_cursor_moved() abort
     return
   endif
 
-  call s:select_commit(state, index)
+  call s:schedule_commit_select(state, index)
 endfunction
 
 function! s:cycle_pane(delta) abort
@@ -617,6 +717,20 @@ function! s:toggle_help() abort
   endif
 endfunction
 
+function! s:toggle_branch_help() abort
+  let state = s:cur_state()
+  if empty(state)
+    return
+  endif
+
+  let keep_name = ''
+  if state.branch_index >= 0 && state.branch_index < len(state.branches)
+    let keep_name = state.branches[state.branch_index].name
+  endif
+  let state.branch_show_help = !get(state, 'branch_show_help', 0)
+  call s:load_branches(state, keep_name)
+endfunction
+
 function! s:git_do(root, args) abort
   let cmd = 'git --no-pager -c core.quotePath=false -c credential.interactive=never -C '
         \ . shellescape(a:root) . ' ' . a:args . ' 2>&1'
@@ -681,17 +795,110 @@ function! s:refresh_file_list(state, keep_path) abort
   endtry
 endfunction
 
-function! s:refresh_files() abort
+function! s:refresh_debounce_delay() abort
+  let value = get(g:, 'git_changes_refresh_debounce_ms', 1000)
+  if type(value) != type(0)
+    return 1000
+  endif
+  return value > 0 ? value : 0
+endfunction
+
+function! s:cancel_refresh(state) abort
+  if get(a:state, 'refresh_timer', -1) != -1
+    call timer_stop(a:state.refresh_timer)
+    let a:state.refresh_timer = -1
+  endif
+endfunction
+
+function! s:apply_pending_refresh(state) abort
+  let a:state.refresh_timer = -1
+  call s:do_refresh_all(a:state)
+endfunction
+
+function! s:refresh_all() abort
   let state = s:cur_state()
-  if empty(state) || empty(state.commits) || state.commit_index < 0
+  if empty(state)
     return
   endif
 
-  let keep_path = ''
-  if state.file_index >= 0 && state.file_index < len(state.files)
-    let keep_path = state.files[state.file_index].path
+  let delay = s:refresh_debounce_delay()
+  if !exists('*timer_start') || delay <= 0
+    call s:do_refresh_all(state)
+    return
   endif
-  call s:refresh_file_list(state, keep_path)
+
+  call s:cancel_refresh(state)
+  let state.refresh_timer = timer_start(delay,
+        \ {-> s:apply_pending_refresh(state)})
+endfunction
+
+function! s:do_refresh_all(state) abort
+  let state = a:state
+  if get(state, 'refreshing', 0) || !s:state_alive(state)
+    return
+  endif
+
+  call s:flush_pending(state)
+  let state.refreshing = 1
+  let old_lazy = &lazyredraw
+  set lazyredraw
+  try
+    let keep_kind = ''
+    let keep_sha = ''
+    let keep_index = state.commit_index
+    if state.commit_index >= 0 && state.commit_index < len(state.commits)
+      let entry = state.commits[state.commit_index]
+      let keep_kind = entry.kind
+      let keep_sha = get(entry, 'sha', '')
+    endif
+
+    let keep_path = ''
+    if state.file_index >= 0 && state.file_index < len(state.files)
+      let keep_path = state.files[state.file_index].path
+    endif
+
+    let keep_branch = ''
+    if state.branch_index >= 0 && state.branch_index < len(state.branches)
+      let keep_branch = state.branches[state.branch_index].name
+    endif
+
+    let state.updating = 1
+    try
+      call s:load_branches(state, keep_branch)
+      call s:load_commits(state)
+    finally
+      let state.updating = 0
+    endtry
+
+    if empty(state.commits)
+      call s:show_no_commits(state)
+      return
+    endif
+
+    let new_index = -1
+    for i in range(len(state.commits))
+      let candidate = state.commits[i]
+      if !empty(keep_sha)
+        if get(candidate, 'sha', '') ==# keep_sha
+          let new_index = i
+          break
+        endif
+      elseif candidate.kind ==# keep_kind
+        let new_index = i
+        break
+      endif
+    endfor
+    if new_index < 0
+      let new_index = min([max([keep_index, 0]), len(state.commits) - 1])
+    endif
+
+    let state.commit_index = new_index
+    call s:set_cursor(state.commits_win, state.commits_header + 1 + new_index)
+    call s:refresh_file_list(state, keep_path)
+  finally
+    let &lazyredraw = old_lazy
+    let state.refreshing = 0
+  endtry
 endfunction
 
 function! s:discard_current() abort
@@ -699,6 +906,7 @@ function! s:discard_current() abort
   if empty(state) || empty(state.commits) || state.commit_index < 0
     return
   endif
+  call s:flush_pending(state)
 
   let entry = state.commits[state.commit_index]
   if entry.kind !=# 'worktree'
@@ -801,6 +1009,7 @@ function! s:open_file() abort
   if empty(state) || empty(state.commits) || state.commit_index < 0
     return
   endif
+  call s:flush_pending(state)
 
   let index = s:current_file_index(state)
   if index < 0 || index >= len(state.files)
@@ -822,6 +1031,7 @@ function! s:copy_file_path() abort
   if empty(state) || empty(state.commits) || state.commit_index < 0
     return
   endif
+  call s:flush_pending(state)
 
   let index = s:current_file_index(state)
   if index < 0 || index >= len(state.files)
@@ -843,6 +1053,7 @@ function! s:copy_commit_hash() abort
     call s:err('select a commit first')
     return
   endif
+  call s:flush_pending(state)
 
   let entry = state.commits[state.commit_index]
   if entry.kind !=# 'commit'
@@ -892,6 +1103,7 @@ function! s:edit_commit_message() abort
     call s:err('select a commit first')
     return
   endif
+  call s:flush_pending(state)
 
   let entry = state.commits[state.commit_index]
   if entry.kind !=# 'commit'
@@ -1136,6 +1348,7 @@ function! s:commit_current() abort
   if empty(state)
     return
   endif
+  call s:flush_pending(state)
 
   if !s:has_staged_changes(state.root, [])
     echomsg 'No staged changes to commit'
@@ -1198,6 +1411,7 @@ function! s:commit_with_editor() abort
   if empty(state)
     return
   endif
+  call s:flush_pending(state)
 
   if !s:has_staged_changes(state.root, [])
     echomsg 'No staged changes to commit'
@@ -1263,6 +1477,8 @@ function! s:apply_commit_message() abort
 endfunction
 
 function! s:reload_current_branch(state) abort
+  call s:cancel_pending(a:state)
+  call s:cancel_refresh(a:state)
   let a:state.log_range = ''
   let a:state.log_ref = ''
   let a:state.list_title = 'Branch: ' . s:current_branch(a:state.root)
@@ -1330,6 +1546,7 @@ function! s:stage_current(mode) abort
   if empty(state) || empty(state.commits) || state.commit_index < 0
     return
   endif
+  call s:flush_pending(state)
 
   let entry = state.commits[state.commit_index]
   if entry.kind !=# 'worktree'
@@ -1413,12 +1630,14 @@ function! s:load_branches(state, select_name) abort
     let selected = 0
   endif
 
-  let header = [
-        \ '# Branches',
-        \ '# j/k:select Enter:show 1/2/3 Tab/S-Tab',
-        \ '# c:commit C:edit p:pull P:push',
-        \ '# co:checkout n:new d:delete yy:copy',
-        \ ]
+  let header = ['# Branches']
+  if get(a:state, 'branch_show_help', 0)
+    call extend(header, [
+          \ '# j/k:select Enter:show 1/2/3 Tab/S-Tab',
+          \ '# c:commit C:edit p:pull P:push',
+          \ '# co:checkout n:new d:delete yy:copy ?:hide',
+          \ ])
+  endif
   let a:state.branch_header = len(header)
   let a:state.branches = branches
   let a:state.branch_index = selected
@@ -1774,7 +1993,9 @@ function! s:commit_body_lines(state, entry) abort
 endfunction
 
 function! s:files_header_lines(state, entry) abort
-  let lines = ['# ' . a:entry.short . '  ' . s:truncate(a:entry.subject, 90)]
+  let lines = a:entry.kind ==# 'commit'
+        \ ? ['# ' . a:entry.short]
+        \ : ['# ' . a:entry.short . '  ' . s:truncate(a:entry.subject, 90)]
 
   if a:entry.kind ==# 'worktree'
     let [staged, unstaged, untracked] = s:worktree_summary(a:state.files)
@@ -1802,6 +2023,7 @@ function! s:files_header_lines(state, entry) abort
   else
     call add(lines, '# Author: ' . s:truncate(a:entry.author, 90))
     call add(lines, '# Date:   ' . a:entry.date)
+    call add(lines, '# ' . s:truncate(a:entry.subject, 90))
     for body_line in s:commit_body_lines(a:state, a:entry)
       call add(lines, '# ' . body_line)
     endfor
@@ -2130,25 +2352,63 @@ function! s:load_side_buffer(state, side, path, lines, detect_filetype, label) a
   let buf = s:side_buf(a:state, a:side)
   let winid = s:side_win(a:state, a:side)
   if buf <= 0 || !bufexists(buf) || !s:win_exists(winid)
-    return
+    return 0
   endif
 
-  call s:set_lines(buf, a:lines)
-
-  if a:detect_filetype
-    call s:set_side_filetype(a:state, a:side, a:path)
-  else
-    let name = '[GitChanges ' . a:state.id . '] ' . a:side
-    call win_execute(winid, 'silent! file ' . fnameescape(name))
-    call win_execute(winid, 'setlocal filetype=')
-    call win_execute(winid, 'silent! unlet! b:current_syntax')
+  let content_changed = s:set_lines(buf, a:lines)
+  let path_changed = getbufvar(buf, 'git_changes_side_path', '') !=# a:path
+  if path_changed
+    if a:detect_filetype
+      call s:set_side_filetype(a:state, a:side, a:path)
+    else
+      let name = '[GitChanges ' . a:state.id . '] ' . a:side
+      call win_execute(winid, 'silent! file ' . fnameescape(name))
+      call win_execute(winid, 'setlocal filetype=')
+      call win_execute(winid, 'silent! unlet! b:current_syntax')
+    endif
+    call setbufvar(buf, 'git_changes_side_path', a:path)
   endif
 
   call win_execute(winid, 'setlocal nowrap number numberwidth=4 cursorline '
         \ . 'scrollbind cursorbind foldenable foldmethod=diff foldlevel=99')
   let label = substitute(a:label, '%', '%%', 'g')
   call win_execute(winid, 'let &l:statusline = ' . string(label))
-  call s:set_cursor(winid, 1)
+  if content_changed || path_changed
+    call s:set_cursor(winid, 1)
+  endif
+  return content_changed || path_changed
+endfunction
+
+function! s:side_needs_update(state, side, path, lines) abort
+  let buf = s:side_buf(a:state, a:side)
+  if buf <= 0 || !bufexists(buf)
+    return 1
+  endif
+  let target = empty(a:lines) ? [''] : a:lines
+  return getbufline(buf, 1, '$') !=# target
+        \ || getbufvar(buf, 'git_changes_side_path', '') !=# a:path
+endfunction
+
+function! s:diff_off(state) abort
+  for winid in [a:state.old_win, a:state.new_win]
+    if s:win_exists(winid)
+      call win_execute(winid, 'silent! diffoff')
+    endif
+  endfor
+endfunction
+
+function! s:diff_on(state) abort
+  for winid in [a:state.old_win, a:state.new_win]
+    if s:win_exists(winid)
+      call win_execute(winid, 'silent! diffthis')
+    endif
+  endfor
+  for winid in [a:state.old_win, a:state.new_win]
+    if s:win_exists(winid)
+      call win_execute(winid,
+            \ 'setlocal foldenable foldmethod=diff foldlevel=99')
+    endif
+  endfor
 endfunction
 
 function! s:sync_diff(state) abort
@@ -2170,9 +2430,19 @@ function! s:sync_diff(state) abort
 endfunction
 
 function! s:show_side_message(state, lines) abort
-  call s:load_side_buffer(a:state, 'old', '', a:lines, 0, 'GitChanges')
-  call s:load_side_buffer(a:state, 'new', '', a:lines, 0, 'GitChanges')
-  call s:sync_diff(a:state)
+  let need_diff = s:side_needs_update(a:state, 'old', '', a:lines)
+        \ || s:side_needs_update(a:state, 'new', '', a:lines)
+  if need_diff
+    call s:diff_off(a:state)
+  endif
+  call s:load_side_buffer(a:state, 'old', '', a:lines, 0,
+        \ 'GitChanges')
+  call s:load_side_buffer(a:state, 'new', '', a:lines, 0,
+        \ 'GitChanges')
+  if need_diff
+    call s:diff_on(a:state)
+    call s:sync_diff(a:state)
+  endif
 endfunction
 
 function! s:is_binary(state, args, paths) abort
@@ -2211,11 +2481,19 @@ function! s:show_commit_diff(state, commit, file) abort
   let new_lines = s:git(a:state.root,
         \ 'show ' . shellescape(a:commit.sha . ':' . new_path))
 
+  let need_diff = s:side_needs_update(a:state, 'old', old_path, old_lines)
+        \ || s:side_needs_update(a:state, 'new', new_path, new_lines)
+  if need_diff
+    call s:diff_off(a:state)
+  endif
   call s:load_side_buffer(a:state, 'old', old_path, old_lines, 1,
         \ 'PARENT ' . old_path)
   call s:load_side_buffer(a:state, 'new', new_path, new_lines, 1,
         \ a:commit.short . ' ' . new_path)
-  call s:sync_diff(a:state)
+  if need_diff
+    call s:diff_on(a:state)
+    call s:sync_diff(a:state)
+  endif
 endfunction
 
 function! s:show_compare_diff(state, entry, file) abort
@@ -2234,11 +2512,19 @@ function! s:show_compare_diff(state, entry, file) abort
   let new_lines = s:git(a:state.root,
         \ 'show ' . shellescape(a:entry.new_ref . ':' . new_path))
 
+  let need_diff = s:side_needs_update(a:state, 'old', old_path, old_lines)
+        \ || s:side_needs_update(a:state, 'new', new_path, new_lines)
+  if need_diff
+    call s:diff_off(a:state)
+  endif
   call s:load_side_buffer(a:state, 'old', old_path, old_lines, 1,
         \ a:entry.old_label . ' ' . old_path)
   call s:load_side_buffer(a:state, 'new', new_path, new_lines, 1,
         \ a:entry.new_label . ' ' . new_path)
-  call s:sync_diff(a:state)
+  if need_diff
+    call s:diff_on(a:state)
+    call s:sync_diff(a:state)
+  endif
 endfunction
 
 function! s:worktree_file_is_binary(root, path) abort
@@ -2276,11 +2562,19 @@ function! s:show_worktree_diff(state, file) abort
         \ 'show ' . shellescape('HEAD:' . old_path))
   let new_lines = s:read_worktree(a:state.root, new_path)
 
+  let need_diff = s:side_needs_update(a:state, 'old', old_path, old_lines)
+        \ || s:side_needs_update(a:state, 'new', new_path, new_lines)
+  if need_diff
+    call s:diff_off(a:state)
+  endif
   call s:load_side_buffer(a:state, 'old', old_path, old_lines, 1,
         \ 'HEAD ' . old_path)
   call s:load_side_buffer(a:state, 'new', new_path, new_lines, 1,
         \ 'WORKTREE ' . new_path)
-  call s:sync_diff(a:state)
+  if need_diff
+    call s:diff_on(a:state)
+    call s:sync_diff(a:state)
+  endif
 endfunction
 
 function! s:show_diff(state, file) abort
@@ -2289,13 +2583,19 @@ function! s:show_diff(state, file) abort
   endif
   let entry = a:state.commits[a:state.commit_index]
 
-  if entry.kind ==# 'worktree'
-    call s:show_worktree_diff(a:state, a:file)
-  elseif entry.kind ==# 'compare'
-    call s:show_compare_diff(a:state, entry, a:file)
-  else
-    call s:show_commit_diff(a:state, entry, a:file)
-  endif
+  let old_lazy = &lazyredraw
+  set lazyredraw
+  try
+    if entry.kind ==# 'worktree'
+      call s:show_worktree_diff(a:state, a:file)
+    elseif entry.kind ==# 'compare'
+      call s:show_compare_diff(a:state, entry, a:file)
+    else
+      call s:show_commit_diff(a:state, entry, a:file)
+    endif
+  finally
+    let &lazyredraw = old_lazy
+  endtry
 endfunction
 
 function! s:select_commit(state, index) abort
@@ -2303,6 +2603,9 @@ function! s:select_commit(state, index) abort
     return
   endif
 
+  call s:cancel_pending(a:state)
+  let old_lazy = &lazyredraw
+  set lazyredraw
   let a:state.updating = 1
   try
     let a:state.commit_index = a:index
@@ -2324,6 +2627,7 @@ function! s:select_commit(state, index) abort
     call s:err(v:exception)
   finally
     let a:state.updating = 0
+    let &lazyredraw = old_lazy
   endtry
 endfunction
 
@@ -2492,6 +2796,7 @@ function! s:open_tab(root, parsed, tabnr) abort
         \ 'has_head': has_head,
         \ 'log_ref': '',
         \ 'show_help': 0,
+        \ 'branch_show_help': 0,
         \ 'file_tree': get(g:, 'git_changes_tree_view', 0) ? 1 : 0,
         \ 'file_line_map': [],
         \ 'file_line_for_index': [],
@@ -2509,6 +2814,9 @@ function! s:open_tab(root, parsed, tabnr) abort
         \ 'old_win': 0,
         \ 'new_win': 0,
         \ 'branches_win': 0,
+        \ 'file_timer': -1,
+        \ 'commit_timer': -1,
+        \ 'refresh_timer': -1,
         \ }
 
   tabnew
@@ -2605,6 +2913,8 @@ endfunction
 
 function! s:quit_state(state) abort
   let state = a:state
+  call s:cancel_pending(state)
+  call s:cancel_refresh(state)
   let wins = win_findbuf(state.files_buf)
   if empty(wins)
     let wins = win_findbuf(state.commits_buf)

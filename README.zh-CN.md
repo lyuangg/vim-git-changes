@@ -72,7 +72,7 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 | `Ctrl-d` / `Ctrl-u` | 半页滚动 diff |
 | `t` | 列表 / tree 样式切换 |
 | `?` | 显示 / 隐藏帮助 |
-| `r` | 刷新状态 |
+| `r` | 刷新文件、commit 和分支 |
 | `s` | stage 文件 |
 | `u` | unstage 文件 |
 | `-` | stage 或 unstage 文件 |
@@ -94,6 +94,7 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 | `e` | 编辑未 push commit 的 message |
 | `yy` | 复制完整 commit hash |
 
+
 ### 分支列表
 
 | 按键 | 操作 |
@@ -104,6 +105,7 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 | `n` | 从所选分支新建分支并切换过去 |
 | `d` | 删除所选本地分支 |
 | `yy` | 复制分支名 |
+| `?` | 显示 / 隐藏帮助（默认隐藏） |
 
 ## 配置
 
@@ -131,6 +133,12 @@ let g:git_changes_tree_view = 0
 
 " commit message 正文最多显示多少行
 let g:git_changes_commit_body_lines = 20
+
+" 移动后更新 diff 的延迟毫秒数，0 表示关闭延迟
+let g:git_changes_debounce_ms = 300
+
+" 按 r 刷新前的防抖毫秒数，0 表示关闭防抖
+let g:git_changes_refresh_debounce_ms = 1000
 
 " discard 文件前是否确认
 let g:git_changes_confirm_discard = 1

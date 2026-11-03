@@ -72,7 +72,7 @@ Help is hidden by default in the file list. Press `?` to show it and `?` again t
 | `Ctrl-d` / `Ctrl-u` | Scroll the diff by half a page |
 | `t` | Toggle list/tree view |
 | `?` | Show/hide help |
-| `r` | Refresh status |
+| `r` | Refresh files, commits, and branches |
 | `s` | Stage file |
 | `u` | Unstage file |
 | `-` | Stage or unstage file |
@@ -94,6 +94,7 @@ Help is hidden by default in the file list. Press `?` to show it and `?` again t
 | `e` | Edit an unpushed commit message |
 | `yy` | Copy the full commit hash |
 
+
 ### Branch list
 
 | Key | Action |
@@ -104,6 +105,7 @@ Help is hidden by default in the file list. Press `?` to show it and `?` again t
 | `n` | Create a branch from the selected branch and switch to it |
 | `d` | Delete the selected local branch |
 | `yy` | Copy the branch name |
+| `?` | Show/hide help (hidden by default) |
 
 ## Configuration
 
@@ -131,6 +133,12 @@ let g:git_changes_tree_view = 0
 
 " Maximum commit message body lines to show
 let g:git_changes_commit_body_lines = 20
+
+" Delay before updating the diff after moving (ms, 0 disables)
+let g:git_changes_debounce_ms = 300
+
+" Delay before refreshing after r (ms, 0 disables)
+let g:git_changes_refresh_debounce_ms = 1000
 
 " Confirm before discarding a file
 let g:git_changes_confirm_discard = 1
