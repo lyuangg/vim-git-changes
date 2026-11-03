@@ -60,8 +60,6 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 :GitChanges v1.0 v2.0
 ```
 
-执行 `:GitChangesQuit` 关闭 tab。
-
 文件列表中的帮助默认隐藏，按 `?` 显示，再按 `?` 隐藏。
 
 ### 文件列表
@@ -70,6 +68,7 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 | --- | --- |
 | `j` / `k` | 切换文件 |
 | `J` / `K` | 滚动 diff |
+| `H` / `L` | 左右滚动 diff |
 | `Ctrl-d` / `Ctrl-u` | 半页滚动 diff |
 | `t` | 列表 / tree 样式切换 |
 | `?` | 显示 / 隐藏帮助 |
@@ -81,10 +80,10 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 | `o` | 在新标签页打开当前文件（diff 窗口也可用） |
 | `yy` | 复制文件绝对路径 |
 | `c` | commit 已暂存内容 |
+| `C` | 使用编辑器提交已暂存内容（显示分支和暂存状态） |
 | `p` | pull |
 | `P` | push |
-
-stage、unstage、discard、commit、pull、push 只对 `WORK` 条目生效。
+| `q` | 关闭 GitChanges tab |
 
 ### Commit 列表
 
@@ -92,6 +91,7 @@ stage、unstage、discard、commit、pull、push 只对 `WORK` 条目生效。
 | --- | --- |
 | `j` / `k` | 切换 commit |
 | `J` / `K` | 滚动 diff |
+| `e` | 编辑未 push commit 的 message |
 | `yy` | 复制完整 commit hash |
 
 ### 分支列表
@@ -137,6 +137,9 @@ let g:git_changes_confirm_discard = 1
 
 " 删除分支前是否确认
 let g:git_changes_confirm_branch_delete = 1
+
+" 没有 remote 时重写旧 commit 前是否确认
+let g:git_changes_confirm_rewrite = 1
 ```
 
 ### 快捷键
@@ -173,7 +176,9 @@ let g:git_changes_keymaps = {
 | `copy_file` | `yy` |
 | `copy_commit` | `yy` |
 | `copy_branch` | `yy` |
+| `edit_message` | `e` |
 | `commit` | `c` |
+| `commit_editor` | `C` |
 | `pull` | `p` |
 | `push` | `P` |
 | `new_branch` | `n` |
@@ -185,4 +190,6 @@ let g:git_changes_keymaps = {
 | `pane_files` | `1` |
 | `pane_commits` | `2` |
 | `pane_branches` | `3` |
-| `quit` | 无 |
+| `diff_left` | `H` |
+| `diff_right` | `L` |
+| `quit` | `q` |

@@ -157,8 +157,12 @@ function! s:set_lines(buf, lines) abort
   endtry
 endfunction
 
+function! s:win_exists(winid) abort
+  return a:winid > 0 && !empty(getwininfo(a:winid))
+endfunction
+
 function! s:set_cursor(winid, lnum) abort
-  if a:winid <= 0 || win_id2win(a:winid) == 0
+  if !s:win_exists(a:winid)
     return
   endif
 
@@ -173,7 +177,7 @@ function! s:set_cursor(winid, lnum) abort
 endfunction
 
 function! s:scroll_top(winid) abort
-  if a:winid <= 0 || win_id2win(a:winid) == 0
+  if !s:win_exists(a:winid)
     return
   endif
   if exists('*win_execute')
@@ -218,7 +222,9 @@ function! s:default_keymaps() abort
         \ 'copy_file': 'yy',
         \ 'copy_commit': 'yy',
         \ 'copy_branch': 'yy',
+        \ 'edit_message': 'e',
         \ 'commit': 'c',
+        \ 'commit_editor': 'C',
         \ 'pull': 'p',
         \ 'push': 'P',
         \ 'new_branch': 'n',
@@ -230,7 +236,9 @@ function! s:default_keymaps() abort
         \ 'pane_files': '1',
         \ 'pane_commits': '2',
         \ 'pane_branches': '3',
-        \ 'quit': '',
+        \ 'diff_left': 'H',
+        \ 'diff_right': 'L',
+        \ 'quit': 'q',
         \ }
 endfunction
 
@@ -288,6 +296,7 @@ endfunction
 
 function! s:map_left_action_keys() abort
   call s:map_keys('commit', ':<C-u>call ' . s:sid . 'commit_current()<CR>')
+  call s:map_keys('commit_editor', ':<C-u>call ' . s:sid . 'commit_with_editor()<CR>')
   call s:map_keys('pull', ':<C-u>call ' . s:sid . 'pull_current()<CR>')
   call s:map_keys('push', ':<C-u>call ' . s:sid . 'push_current()<CR>')
   call s:map_keys('new_branch', ':<C-u>call ' . s:sid . 'new_branch()<CR>')
@@ -305,8 +314,8 @@ function! s:init_list_buffer(state, kind) abort
   call s:map_fixed('<Up>', ':<C-u>call ' . s:sid . 'move_cursor(-1)<CR>')
   call s:map_fixed('J', ':<C-u>call ' . s:sid . 'scroll_diff(1)<CR>')
   call s:map_fixed('K', ':<C-u>call ' . s:sid . 'scroll_diff(-1)<CR>')
-  call s:map_keys('cycle_next', ':<C-u>call ' . s:sid . 'cycle_left_pane(1)<CR>')
-  call s:map_keys('cycle_prev', ':<C-u>call ' . s:sid . 'cycle_left_pane(-1)<CR>')
+  call s:map_keys('cycle_next', ':<C-u>call ' . s:sid . 'cycle_pane(1)<CR>')
+  call s:map_keys('cycle_prev', ':<C-u>call ' . s:sid . 'cycle_pane(-1)<CR>')
   call s:map_left_pane_keys()
   call s:map_left_action_keys()
 
@@ -322,8 +331,11 @@ function! s:init_list_buffer(state, kind) abort
     call s:map_keys('scroll_half_down', ':<C-u>call ' . s:sid . 'scroll_diff_half(1)<CR>')
     call s:map_keys('scroll_half_up', ':<C-u>call ' . s:sid . 'scroll_diff_half(-1)<CR>')
     call s:map_keys('copy_file', ':<C-u>call ' . s:sid . 'copy_file_path()<CR>')
+    call s:map_keys('diff_left', ':<C-u>call ' . s:sid . 'scroll_diff_horizontal(-1)<CR>')
+    call s:map_keys('diff_right', ':<C-u>call ' . s:sid . 'scroll_diff_horizontal(1)<CR>')
   elseif a:kind ==# 'commits'
     call s:map_keys('copy_commit', ':<C-u>call ' . s:sid . 'copy_commit_hash()<CR>')
+    call s:map_keys('edit_message', ':<C-u>call ' . s:sid . 'edit_commit_message()<CR>')
   endif
 
   call s:map_quit()
@@ -341,6 +353,15 @@ function! s:init_diff_buffer(state, side) abort
   let b:gc_side = a:side
   call s:setup_diff_window()
   call s:map_keys('open_file', ':<C-u>call ' . s:sid . 'open_file()<CR>')
+  call s:map_keys('stage', ':<C-u>call ' . s:sid . 'stage_current("stage")<CR>')
+  call s:map_keys('unstage', ':<C-u>call ' . s:sid . 'stage_current("unstage")<CR>')
+  call s:map_keys('toggle_stage', ':<C-u>call ' . s:sid . 'stage_current("toggle")<CR>')
+  call s:map_keys('commit', ':<C-u>call ' . s:sid . 'commit_current()<CR>')
+  call s:map_keys('pull', ':<C-u>call ' . s:sid . 'pull_current()<CR>')
+  call s:map_keys('push', ':<C-u>call ' . s:sid . 'push_current()<CR>')
+  call s:map_keys('commit_editor', ':<C-u>call ' . s:sid . 'commit_with_editor()<CR>')
+  call s:map_keys('cycle_next', ':<C-u>call ' . s:sid . 'cycle_pane(1)<CR>')
+  call s:map_keys('cycle_prev', ':<C-u>call ' . s:sid . 'cycle_pane(-1)<CR>')
   call s:map_quit()
 endfunction
 
@@ -355,8 +376,8 @@ function! s:init_branch_buffer(state) abort
   call s:map_fixed('<Up>', ':<C-u>call ' . s:sid . 'move_cursor(-1)<CR>')
   call s:map_keys('checkout_branch', ':<C-u>call ' . s:sid . 'checkout_branch()<CR>')
   call s:map_keys('apply_branch', ':<C-u>call ' . s:sid . 'apply_branch()<CR>')
-  call s:map_keys('cycle_next', ':<C-u>call ' . s:sid . 'cycle_left_pane(1)<CR>')
-  call s:map_keys('cycle_prev', ':<C-u>call ' . s:sid . 'cycle_left_pane(-1)<CR>')
+  call s:map_keys('cycle_next', ':<C-u>call ' . s:sid . 'cycle_pane(1)<CR>')
+  call s:map_keys('cycle_prev', ':<C-u>call ' . s:sid . 'cycle_pane(-1)<CR>')
   call s:map_left_pane_keys()
   call s:map_left_action_keys()
   call s:map_keys('branch_delete', ':<C-u>call ' . s:sid . 'delete_branch()<CR>')
@@ -485,13 +506,14 @@ function! s:on_commits_cursor_moved() abort
   call s:select_commit(state, index)
 endfunction
 
-function! s:cycle_left_pane(delta) abort
+function! s:cycle_pane(delta) abort
   let state = s:cur_state()
   if empty(state)
     return
   endif
 
-  let windows = [state.files_win, state.commits_win, state.branches_win]
+  let windows = [state.files_win, state.commits_win, state.branches_win,
+        \ state.old_win, state.new_win]
   let current = win_getid()
   let target = 0
   for i in range(len(windows))
@@ -503,11 +525,26 @@ function! s:cycle_left_pane(delta) abort
 
   for _ in range(len(windows))
     let winid = windows[target]
-    if winid > 0 && win_id2win(winid) > 0
+    if s:win_exists(winid)
       call win_gotoid(winid)
       return
     endif
     let target = (target + a:delta + len(windows)) % len(windows)
+  endfor
+endfunction
+
+" Scroll both diff windows horizontally without changing focus.
+function! s:scroll_diff_horizontal(delta) abort
+  let state = s:cur_state()
+  if empty(state)
+    return
+  endif
+
+  let key = a:delta > 0 ? 'zl' : 'zh'
+  for winid in [state.old_win, state.new_win]
+    if s:win_exists(winid)
+      call win_execute(winid, 'silent! normal! ' . key)
+    endif
   endfor
 endfunction
 
@@ -820,6 +857,280 @@ function! s:copy_commit_hash() abort
   endif
 endfunction
 
+function! s:is_ancestor(root, ancestor, descendant) abort
+  let cmd = 'git --no-pager -C ' . shellescape(a:root)
+        \ . ' merge-base --is-ancestor '
+        \ . shellescape(a:ancestor) . ' ' . shellescape(a:descendant)
+        \ . ' 2>&1'
+  call system(cmd)
+  return v:shell_error == 0
+endfunction
+
+function! s:git_in_progress(root) abort
+  let gitdir = s:git_one(a:root, 'rev-parse --absolute-git-dir')
+  if empty(gitdir)
+    return ''
+  endif
+
+  for marker in ['MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD',
+        \ 'BISECT_LOG']
+    if filereadable(gitdir . '/' . marker)
+      return marker
+    endif
+  endfor
+  for marker in ['rebase-merge', 'rebase-apply', 'sequencer']
+    if isdirectory(gitdir . '/' . marker)
+      return marker
+    endif
+  endfor
+  return ''
+endfunction
+
+function! s:edit_commit_message() abort
+  let state = s:cur_state()
+  if empty(state) || empty(state.commits) || state.commit_index < 0
+    call s:err('select a commit first')
+    return
+  endif
+
+  let entry = state.commits[state.commit_index]
+  if entry.kind !=# 'commit'
+    call s:err('select a commit first')
+    return
+  endif
+
+  let in_progress = s:git_in_progress(state.root)
+  if !empty(in_progress)
+    call s:err('finish or abort the current Git operation first ('
+          \ . in_progress . ')')
+    return
+  endif
+
+  let branch = s:git_one(state.root, 'symbolic-ref --short -q HEAD')
+  if empty(branch)
+    call s:err('cannot edit a commit message in detached HEAD')
+    return
+  endif
+  if !empty(state.log_ref) && state.log_ref !=# branch
+    call s:err('check out ' . state.log_ref . ' to edit its commits')
+    return
+  endif
+  if !s:is_ancestor(state.root, entry.sha, 'HEAD')
+    call s:err('commit is not on the current branch')
+    return
+  endif
+
+  let head_sha = s:git_one(state.root, 'rev-parse HEAD')
+  let is_head = entry.sha ==# head_sha
+  let has_remote = !empty(s:git(state.root, 'remote'))
+  if has_remote && !get(entry, 'unpushed', 0)
+    call s:err('only unpushed commits can be edited')
+    return
+  endif
+
+  if !is_head
+        \ && !empty(s:git(state.root, 'status --porcelain --untracked-files=no'))
+    call s:err('commit or stash changes before editing an older commit')
+    return
+  endif
+
+  if !is_head && get(g:, 'git_changes_confirm_rewrite', 1)
+    let rewrite_count = s:git_one(state.root,
+          \ 'rev-list --count ' . shellescape(entry.sha . '..' . branch))
+    let total = empty(rewrite_count) ? 1 : str2nr(rewrite_count) + 1
+    let prompt = printf('Rewrite %d commit(s) on %s? '
+          \ . 'Other branches will not be updated. Continue?', total, branch)
+    if confirm(prompt, "&Yes\n&No", 2) != 1
+      return
+    endif
+  endif
+
+  let message = s:git(state.root,
+        \ 'log -1 --format=%B ' . shellescape(entry.sha))
+  while !empty(message) && empty(trim(message[-1]))
+    call remove(message, -1)
+  endwhile
+  if empty(message)
+    let message = [entry.subject]
+  endif
+
+  let msgfile = tempname()
+  tabnew
+  execute 'silent! file ' . fnameescape(msgfile)
+  setlocal buftype=acwrite
+  setlocal bufhidden=wipe
+  setlocal noswapfile
+  setlocal nobuflisted
+  setlocal filetype=gitcommit
+  call setline(1, message)
+  setlocal nomodified
+  nnoremap <buffer> <silent> q :<C-u>quit<CR>
+
+  let b:git_changes_edit = {
+        \ 'state': state,
+        \ 'sha': entry.sha,
+        \ 'branch': branch,
+        \ 'is_head': is_head,
+        \ }
+  augroup git_changes_edit_message
+    autocmd! * <buffer>
+    execute 'autocmd BufWriteCmd <buffer> call '
+          \ . s:sid . 'apply_edited_message()'
+  augroup END
+
+  call cursor(1, 1)
+  echomsg 'Edit the message, then :w to save or :q to cancel'
+endfunction
+
+function! s:delete_ref_tree(root, prefix) abort
+  for ref in s:git(a:root,
+        \ 'for-each-ref ' . shellescape('--format=%(refname)') . ' '
+        \ . shellescape(a:prefix))
+    call s:git(a:root, 'update-ref -d ' . shellescape(ref))
+  endfor
+endfunction
+
+" Rewrite the target message with filter-branch so merge history is preserved
+" without replaying patches (which can cause conflicts).
+function! s:reword_commit(info, msgfile) abort
+  let root = a:info.state.root
+  let sha = a:info.sha
+  let branch = a:info.branch
+  let unique = a:info.state.id . '-' . localtime()
+  let state_ref = 'refs/gitchanges/state-' . unique
+  let backup_ns = 'refs/gitchanges/backup-' . unique
+
+  let filter = 'if [ "$GIT_COMMIT" = ' . shellescape(sha) . ' ]; then cat '
+        \ . shellescape(a:msgfile) . '; else cat; fi'
+  let parent = s:git_one(root,
+        \ 'rev-parse --verify -q ' . shellescape(sha . '^'))
+  let range = empty(parent)
+        \ ? '--root ' . shellescape(branch)
+        \ : shellescape(sha . '^..' . branch)
+  let args = 'filter-branch -f'
+        \ . ' --original ' . shellescape(backup_ns)
+        \ . ' --state-branch ' . shellescape(state_ref)
+        \ . ' --msg-filter ' . shellescape(filter)
+        \ . ' -- ' . range
+
+  let old_head = s:git_one(root, 'rev-parse HEAD')
+  let old_tree = s:git_one(root, 'rev-parse HEAD^{tree}')
+  let old_count = s:git_one(root, 'rev-list --count HEAD')
+  let old_merges = s:git_one(root, 'rev-list --count --merges HEAD')
+
+  let old_squelch = $FILTER_BRANCH_SQUELCH_WARNING
+  let $FILTER_BRANCH_SQUELCH_WARNING = '1'
+  try
+    let ok = s:git_do(root, args)
+  finally
+    let $FILTER_BRANCH_SQUELCH_WARNING = old_squelch
+  endtry
+
+  let new_sha = ''
+  let new_head = ''
+  if ok
+    for line in s:git(root,
+          \ 'show ' . shellescape(state_ref . ':filter.map'))
+      let parts = split(line, ':')
+      if len(parts) >= 2 && parts[0] ==# sha
+        let new_sha = parts[1]
+        break
+      endif
+    endfor
+
+    let new_head = s:git_one(root, 'rev-parse HEAD')
+    let new_tree = s:git_one(root, 'rev-parse HEAD^{tree}')
+    let new_count = s:git_one(root, 'rev-list --count HEAD')
+    let new_merges = s:git_one(root, 'rev-list --count --merges HEAD')
+    if empty(new_head)
+          \ || new_tree !=# old_tree
+          \ || str2nr(new_count) != str2nr(old_count)
+          \ || str2nr(new_merges) != str2nr(old_merges)
+      if !empty(old_head)
+        call s:git(root, 'update-ref '
+              \ . shellescape('refs/heads/' . branch) . ' '
+              \ . shellescape(old_head))
+      endif
+      call s:err('rewrite verification failed; branch restored')
+      let ok = 0
+      let new_sha = ''
+    endif
+  endif
+
+  if ok && empty(new_sha)
+    let new_sha = new_head
+  endif
+
+  call s:delete_ref_tree(root, state_ref)
+  call s:delete_ref_tree(root, backup_ns)
+  return new_sha
+endfunction
+
+function! s:reload_after_reword(state, sha) abort
+  let a:state.updating = 1
+  try
+    call s:load_commits(a:state)
+  finally
+    let a:state.updating = 0
+  endtry
+
+  let index = -1
+  for i in range(len(a:state.commits))
+    if get(a:state.commits[i], 'sha', '') ==# a:sha
+      let index = i
+      break
+    endif
+  endfor
+  if index < 0 && !empty(a:state.commits)
+    let index = 0
+  endif
+  if index >= 0
+    call s:select_commit(a:state, index)
+  endif
+endfunction
+
+function! s:apply_edited_message() abort
+  let info = get(b:, 'git_changes_edit', {})
+  if empty(info)
+    return
+  endif
+
+  let message = getline(1, '$')
+  while !empty(message) && empty(trim(message[-1]))
+    call remove(message, -1)
+  endwhile
+  if empty(message) || empty(trim(message[0]))
+    call s:err('commit message cannot be empty')
+    return
+  endif
+
+  let msgfile = tempname()
+  call writefile(message, msgfile)
+  let target_sha = info.sha
+  try
+    if info.is_head
+      if !s:git_do(info.state.root,
+            \ 'commit --amend --only -F ' . shellescape(msgfile))
+        return
+      endif
+      let target_sha = s:git_one(info.state.root, 'rev-parse HEAD')
+    else
+      let target_sha = s:reword_commit(info, msgfile)
+      if empty(target_sha)
+        return
+      endif
+    endif
+  finally
+    call delete(msgfile)
+  endtry
+
+  let info.sha = target_sha
+  let info.is_head = target_sha ==# s:git_one(info.state.root, 'rev-parse HEAD')
+  setlocal nomodified
+  echomsg 'Commit message updated'
+  call s:reload_after_reword(info.state, target_sha)
+endfunction
+
 function! s:commit_current() abort
   let state = s:cur_state()
   if empty(state)
@@ -843,6 +1154,112 @@ function! s:commit_current() abort
 
   echomsg 'Committed: ' . message
   call s:reload_current_branch(state)
+endfunction
+
+function! s:commit_template(state) abort
+  let lines = [
+        \ '',
+        \ '# Please enter the commit message for your changes. Lines starting',
+        \ '# with ''#'' will be ignored, and an empty message aborts the commit.',
+        \ '#',
+        \ '# On branch ' . s:current_branch(a:state.root),
+        \ '# Changes to be committed:',
+        \ ]
+
+  let labels = {
+        \ 'M': 'modified',
+        \ 'A': 'new file',
+        \ 'D': 'deleted',
+        \ 'R': 'renamed',
+        \ 'C': 'copied',
+        \ 'T': 'typechange',
+        \ 'U': 'unmerged',
+        \ }
+  for line in s:git(a:state.root,
+        \ 'diff --cached --name-status --find-renames')
+    let parts = split(line, "\t", 1)
+    if empty(parts)
+      continue
+    endif
+    let code = strpart(parts[0], 0, 1)
+    let label = get(labels, code, 'modified')
+    let path = get(parts, 1, '')
+    if code ==# 'R' || code ==# 'C'
+      let path .= ' -> ' . get(parts, 2, '')
+    endif
+    call add(lines, printf('#%s%-12s%s', "\t", label . ':', path))
+  endfor
+  call add(lines, '#')
+  return lines
+endfunction
+
+function! s:commit_with_editor() abort
+  let state = s:cur_state()
+  if empty(state)
+    return
+  endif
+
+  if !s:has_staged_changes(state.root, [])
+    echomsg 'No staged changes to commit'
+    return
+  endif
+
+  let msgfile = tempname()
+  tabnew
+  execute 'silent! file ' . fnameescape(msgfile)
+  setlocal buftype=acwrite
+  setlocal bufhidden=wipe
+  setlocal noswapfile
+  setlocal nobuflisted
+  setlocal filetype=gitcommit
+  call setline(1, s:commit_template(state))
+  setlocal nomodified
+  nnoremap <buffer> <silent> q :<C-u>quit<CR>
+
+  let b:git_changes_commit = {'state': state}
+  augroup git_changes_commit_message
+    autocmd! * <buffer>
+    execute 'autocmd BufWriteCmd <buffer> call '
+          \ . s:sid . 'apply_commit_message()'
+  augroup END
+
+  call cursor(1, 1)
+  echomsg 'Write the commit message, then :w to commit or :q to cancel'
+endfunction
+
+function! s:apply_commit_message() abort
+  let info = get(b:, 'git_changes_commit', {})
+  if empty(info)
+    return
+  endif
+
+  let message = filter(getline(1, '$'), 'v:val !~# "^#"')
+  while !empty(message) && empty(trim(message[-1]))
+    call remove(message, -1)
+  endwhile
+  while !empty(message) && empty(trim(message[0]))
+    call remove(message, 0)
+  endwhile
+  if empty(message) || empty(trim(message[0]))
+    call s:err('commit message cannot be empty')
+    return
+  endif
+
+  let msgfile = tempname()
+  call writefile(message, msgfile)
+  try
+    let ok = s:git_do(info.state.root,
+          \ 'commit --cleanup=strip -F ' . shellescape(msgfile))
+  finally
+    call delete(msgfile)
+  endtry
+  if !ok
+    return
+  endif
+
+  setlocal nomodified
+  echomsg 'Committed'
+  call s:reload_current_branch(info.state)
 endfunction
 
 function! s:reload_current_branch(state) abort
@@ -882,6 +1299,20 @@ function! s:pull_current() abort
   endif
 endfunction
 
+function! s:refresh_commit_marks(state) abort
+  let index = a:state.commit_index
+  let a:state.updating = 1
+  try
+    call s:load_commits(a:state)
+  finally
+    let a:state.updating = 0
+  endtry
+  if index >= 0 && index < len(a:state.commits)
+    call s:set_cursor(a:state.commits_win,
+          \ a:state.commits_header + 1 + index)
+  endif
+endfunction
+
 function! s:push_current() abort
   let state = s:cur_state()
   if empty(state)
@@ -890,6 +1321,7 @@ function! s:push_current() abort
 
   if s:git_do(state.root, 'push')
     echomsg 'Push complete'
+    call s:refresh_commit_marks(state)
   endif
 endfunction
 
@@ -984,7 +1416,7 @@ function! s:load_branches(state, select_name) abort
   let header = [
         \ '# Branches',
         \ '# j/k:select Enter:show 1/2/3 Tab/S-Tab',
-        \ '# c:commit p:pull P:push',
+        \ '# c:commit C:edit p:pull P:push',
         \ '# co:checkout n:new d:delete yy:copy',
         \ ]
   let a:state.branch_header = len(header)
@@ -1357,6 +1789,7 @@ function! s:files_header_lines(state, entry) abort
       call add(lines, '# r:refresh d:discard o:open ?:hide')
       call add(lines, '# yy:path c:commit p:pull P:push n:new')
       call add(lines, '# J/K:scroll C-d/u:half 1/2/3 Tab/S-Tab')
+      call add(lines, '# H/L:scroll diff left/right')
     endif
   elseif a:entry.kind ==# 'compare'
     call add(lines, '# Range: ' . a:state.list_title)
@@ -1364,6 +1797,7 @@ function! s:files_header_lines(state, entry) abort
       call add(lines, '# t:tree r:refresh ?:hide yy:path')
       call add(lines, '# c:commit p:pull P:push n:new')
       call add(lines, '# J/K:scroll C-d/u:half 1/2/3 Tab/S-Tab')
+      call add(lines, '# H/L:scroll diff left/right')
     endif
   else
     call add(lines, '# Author: ' . s:truncate(a:entry.author, 90))
@@ -1375,6 +1809,7 @@ function! s:files_header_lines(state, entry) abort
       call add(lines, '# t:tree r:refresh ?:hide yy:path')
       call add(lines, '# c:commit p:pull P:push n:new')
       call add(lines, '# J/K:scroll C-d/u:half 1/2/3 Tab/S-Tab')
+      call add(lines, '# H/L:scroll diff left/right')
     endif
   endif
 
@@ -1548,6 +1983,31 @@ function! s:read_worktree(root, path) abort
   endtry
 endfunction
 
+" Return the commits in the current view that are not on any remote.
+function! s:unpushed_shas(state) abort
+  if empty(s:git(a:state.root, 'remote'))
+    return {}
+  endif
+
+  let args = 'rev-list'
+  if !empty(a:state.log_range)
+    let args .= ' ' . a:state.log_range
+  elseif !empty(a:state.log_ref)
+    let args .= ' ' . shellescape(a:state.log_ref)
+  elseif a:state.has_head
+    let args .= ' HEAD'
+  else
+    return {}
+  endif
+  let args .= ' --not --remotes'
+
+  let unpushed = {}
+  for sha in s:git(a:state.root, args)
+    let unpushed[sha] = 1
+  endfor
+  return unpushed
+endfunction
+
 function! s:load_commits(state) abort
   let limit = s:opt_int('git_changes_max_commits', 200)
   let skip_merges = get(g:, 'git_changes_exclude_merges', 1)
@@ -1566,6 +2026,7 @@ function! s:load_commits(state) abort
     let out = s:git(a:state.root, args)
   endif
 
+  let unpushed = s:unpushed_shas(a:state)
   let real_commits = []
   for line in out
     let parts = split(line, sep)
@@ -1577,6 +2038,7 @@ function! s:load_commits(state) abort
             \ 'subject': parts[2],
             \ 'author': get(parts, 3, ''),
             \ 'date': get(parts, 4, ''),
+            \ 'unpushed': has_key(unpushed, parts[0]),
             \ })
     endif
   endfor
@@ -1587,13 +2049,15 @@ function! s:load_commits(state) abort
 
   let lines = ['# ' . a:state.list_title . '  (' . len(real_commits) . ' commits)']
   for entry in entries
+    let prefix = get(entry, 'unpushed', 0) ? '↑ ' : '  '
     if entry.kind ==# 'worktree'
-      call add(lines, entry.short . '  ' . entry.subject)
+      call add(lines, prefix . entry.short . '  ' . entry.subject)
     elseif entry.kind ==# 'compare'
-      call add(lines, entry.short . '  '
-            \ . s:truncate(entry.old_label . ' ↔ ' . entry.new_label, 90))
+      call add(lines, prefix . entry.short . '  '
+            \ . s:truncate(entry.old_label . ' ↔ ' . entry.new_label, 88))
     else
-      call add(lines, entry.short . '  ' . s:truncate(entry.subject, 90))
+      call add(lines, prefix . entry.short . '  '
+            \ . s:truncate(entry.subject, 88))
     endif
   endfor
   if empty(real_commits) && !empty(entries)
@@ -1648,7 +2112,7 @@ endfunction
 
 function! s:set_side_filetype(state, side, path) abort
   let winid = s:side_win(a:state, a:side)
-  if winid <= 0 || win_id2win(winid) == 0
+  if !s:win_exists(winid)
     return
   endif
 
@@ -1665,7 +2129,7 @@ endfunction
 function! s:load_side_buffer(state, side, path, lines, detect_filetype, label) abort
   let buf = s:side_buf(a:state, a:side)
   let winid = s:side_win(a:state, a:side)
-  if buf <= 0 || !bufexists(buf) || winid <= 0 || win_id2win(winid) == 0
+  if buf <= 0 || !bufexists(buf) || !s:win_exists(winid)
     return
   endif
 
@@ -1689,9 +2153,9 @@ endfunction
 
 function! s:sync_diff(state) abort
   let winid = 0
-  if a:state.old_win > 0 && win_id2win(a:state.old_win) > 0
+  if s:win_exists(a:state.old_win)
     let winid = a:state.old_win
-  elseif a:state.new_win > 0 && win_id2win(a:state.new_win) > 0
+  elseif s:win_exists(a:state.new_win)
     let winid = a:state.new_win
   endif
 
@@ -1898,25 +2362,36 @@ function! git_changes#open(...) abort
     return
   endif
 
-  if !empty(s:cur_state())
-    call s:err('already in a GitChanges tab; use :GitChangesQuit first')
-    return
-  endif
-
-  let args = a:000
-  if len(args) > 2
+  if len(a:000) > 2
     call s:err('usage: :GitChanges [ref1] [ref2]')
     return
   endif
 
+  let parsed = s:parse_open_args(root, a:000)
+  if empty(parsed)
+    return
+  endif
+
+  let tabnr = 0
+  let state = s:cur_state()
+  if !empty(state)
+    let tabnr = tabpagenr()
+    call s:quit_state(state)
+  endif
+
+  call s:open_tab(root, parsed, tabnr)
+endfunction
+
+function! s:parse_open_args(root, args) abort
   let start_entries = []
   let log_range = ''
   let has_head = 0
+  let list_title = ''
 
-  if empty(args)
-    let head = s:resolve_ref(root, 'HEAD')
+  if empty(a:args)
+    let head = s:resolve_ref(a:root, 'HEAD')
     let has_head = !empty(head)
-    let branch = s:current_branch(root)
+    let branch = s:current_branch(a:root)
     let list_title = 'Branch: ' . branch
     if has_head && get(g:, 'git_changes_show_worktree', 1)
       call add(start_entries, {
@@ -1930,18 +2405,18 @@ function! git_changes#open(...) abort
             \ 'new_label': 'WORKTREE',
             \ })
     endif
-  elseif len(args) == 1
-    let old_ref = s:resolve_ref(root, args[0])
+  elseif len(a:args) == 1
+    let old_ref = s:resolve_ref(a:root, a:args[0])
     if empty(old_ref)
-      call s:err('unknown revision: ' . args[0])
-      return
+      call s:err('unknown revision: ' . a:args[0])
+      return {}
     endif
-    let new_ref = s:resolve_ref(root, 'HEAD')
+    let new_ref = s:resolve_ref(a:root, 'HEAD')
     if empty(new_ref)
       call s:err('HEAD has no commits')
-      return
+      return {}
     endif
-    let old_label = args[0]
+    let old_label = a:args[0]
     let new_label = 'HEAD'
     call add(start_entries, {
           \ 'kind': 'compare',
@@ -1956,18 +2431,18 @@ function! git_changes#open(...) abort
     let list_title = old_label . '..' . new_label
     let log_range = old_ref . '..' . new_ref
   else
-    let old_ref = s:resolve_ref(root, args[0])
+    let old_ref = s:resolve_ref(a:root, a:args[0])
     if empty(old_ref)
-      call s:err('unknown revision: ' . args[0])
-      return
+      call s:err('unknown revision: ' . a:args[0])
+      return {}
     endif
-    let new_ref = s:resolve_ref(root, args[1])
+    let new_ref = s:resolve_ref(a:root, a:args[1])
     if empty(new_ref)
-      call s:err('unknown revision: ' . args[1])
-      return
+      call s:err('unknown revision: ' . a:args[1])
+      return {}
     endif
-    let old_label = args[0]
-    let new_label = args[1]
+    let old_label = a:args[0]
+    let new_label = a:args[1]
     call add(start_entries, {
           \ 'kind': 'compare',
           \ 'short': 'CMP',
@@ -1981,6 +2456,22 @@ function! git_changes#open(...) abort
     let list_title = old_label . '..' . new_label
     let log_range = old_ref . '..' . new_ref
   endif
+
+
+  return {
+        \ 'start_entries': start_entries,
+        \ 'log_range': log_range,
+        \ 'has_head': has_head,
+        \ 'list_title': list_title,
+        \ }
+endfunction
+
+function! s:open_tab(root, parsed, tabnr) abort
+  let root = a:root
+  let start_entries = a:parsed.start_entries
+  let log_range = a:parsed.log_range
+  let has_head = a:parsed.has_head
+  let list_title = a:parsed.list_title
 
   let next_id = get(s:, 'next_id', 0) + 1
   let s:next_id = next_id
@@ -2021,6 +2512,9 @@ function! git_changes#open(...) abort
         \ }
 
   tabnew
+  if a:tabnr > 0
+    execute 'silent! tabmove ' . (a:tabnr - 1)
+  endif
   let initial_buf = bufnr('%')
   let state.tab = tabpagenr()
   let t:git_changes = state
@@ -2109,13 +2603,8 @@ function! git_changes#open(...) abort
   call win_gotoid(state.files_win)
 endfunction
 
-function! git_changes#quit() abort
-  let state = s:find_state()
-  if empty(state)
-    call s:err('no GitChanges tab found')
-    return
-  endif
-
+function! s:quit_state(state) abort
+  let state = a:state
   let wins = win_findbuf(state.files_buf)
   if empty(wins)
     let wins = win_findbuf(state.commits_buf)
@@ -2146,4 +2635,13 @@ function! git_changes#quit() abort
   endfor
 
   call s:forget(state)
+endfunction
+
+function! git_changes#quit() abort
+  let state = s:find_state()
+  if empty(state)
+    call s:err('no GitChanges tab found')
+    return
+  endif
+  call s:quit_state(state)
 endfunction

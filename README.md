@@ -60,8 +60,6 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 :GitChanges v1.0 v2.0
 ```
 
-Run `:GitChangesQuit` to close the tab.
-
 Help is hidden by default in the file list. Press `?` to show it and `?` again to hide it.
 
 ### File list
@@ -70,6 +68,7 @@ Help is hidden by default in the file list. Press `?` to show it and `?` again t
 | --- | --- |
 | `j` / `k` | Move between files |
 | `J` / `K` | Scroll the diff |
+| `H` / `L` | Scroll the diff left / right |
 | `Ctrl-d` / `Ctrl-u` | Scroll the diff by half a page |
 | `t` | Toggle list/tree view |
 | `?` | Show/hide help |
@@ -81,10 +80,10 @@ Help is hidden by default in the file list. Press `?` to show it and `?` again t
 | `o` | Open the current file in a new tab (also in diff windows) |
 | `yy` | Copy the absolute file path |
 | `c` | Commit staged changes |
+| `C` | Commit staged changes using an editor with a status template |
 | `p` | Pull |
 | `P` | Push |
-
-Stage, unstage, discard, commit, pull, and push are available for the `WORK` entry.
+| `q` | Close the GitChanges tab |
 
 ### Commit list
 
@@ -92,6 +91,7 @@ Stage, unstage, discard, commit, pull, and push are available for the `WORK` ent
 | --- | --- |
 | `j` / `k` | Move between commits |
 | `J` / `K` | Scroll the diff |
+| `e` | Edit an unpushed commit message |
 | `yy` | Copy the full commit hash |
 
 ### Branch list
@@ -137,6 +137,9 @@ let g:git_changes_confirm_discard = 1
 
 " Confirm before deleting a branch
 let g:git_changes_confirm_branch_delete = 1
+
+" Confirm before rewriting an older commit without a remote
+let g:git_changes_confirm_rewrite = 1
 ```
 
 ### Keymaps
@@ -173,7 +176,9 @@ let g:git_changes_keymaps = {
 | `copy_file` | `yy` |
 | `copy_commit` | `yy` |
 | `copy_branch` | `yy` |
+| `edit_message` | `e` |
 | `commit` | `c` |
+| `commit_editor` | `C` |
 | `pull` | `p` |
 | `push` | `P` |
 | `new_branch` | `n` |
@@ -185,4 +190,6 @@ let g:git_changes_keymaps = {
 | `pane_files` | `1` |
 | `pane_commits` | `2` |
 | `pane_branches` | `3` |
-| `quit` | none |
+| `diff_left` | `H` |
+| `diff_right` | `L` |
+| `quit` | `q` |
