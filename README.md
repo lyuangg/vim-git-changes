@@ -107,6 +107,19 @@ Help is hidden by default in the file list. Press `?` to show it and `?` again t
 | `yy` | Copy the branch name |
 | `?` | Show/hide help (hidden by default) |
 
+### Status messages
+
+Refresh, pull, and push show progress in the branch pane statusline and in the
+Vim message line (`:messages` keeps the history). Results such as
+`Already up to date` or `Pushed to origin/main` stay visible until the next
+operation.
+
+If `P` is pressed on a branch without an upstream, the plugin asks whether to
+push it to the preferred remote (usually `origin/<branch>`) and set the
+upstream, instead of failing with
+`fatal: The current branch ... has no upstream branch`. When no remote is
+configured, push fails with `Cannot push: no remote configured`.
+
 ## Configuration
 
 ```vim
@@ -148,6 +161,15 @@ let g:git_changes_confirm_branch_delete = 1
 
 " Confirm before rewriting an older commit without a remote
 let g:git_changes_confirm_rewrite = 1
+
+" Show operation status in the branch pane statusline
+let g:git_changes_statusline = 1
+
+" Ask before pushing a branch that has no upstream and setting one
+let g:git_changes_confirm_push_upstream = 1
+
+" Remote used when setting an upstream (empty: origin, or the first remote)
+let g:git_changes_push_remote = ''
 ```
 
 ### Keymaps

@@ -148,6 +148,15 @@ let g:git_changes_confirm_branch_delete = 1
 
 " 没有 remote 时重写旧 commit 前是否确认
 let g:git_changes_confirm_rewrite = 1
+
+" 是否在分支列表底部状态栏显示操作状态
+let g:git_changes_statusline = 1
+
+" 分支没有 upstream 时，push 前是否询问并设置 upstream
+let g:git_changes_confirm_push_upstream = 1
+
+" 设置 upstream 时使用的 remote（为空则用 origin 或第一个 remote）
+let g:git_changes_push_remote = ''
 ```
 
 ### 快捷键

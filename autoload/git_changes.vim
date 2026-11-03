@@ -9,6 +9,66 @@ function! s:err(msg) abort
   echohl None
 endfunction
 
+highlight default link GitChangesLabel       Title
+highlight default link GitChangesStatusInfo  String
+highlight default link GitChangesStatusBusy  WarningMsg
+highlight default link GitChangesStatusError ErrorMsg
+
+function! s:output_message(lines) abort
+  let lines = filter(copy(a:lines),
+        \ '!empty(trim(v:val)) && v:val !~# "^hint:"')
+  return empty(lines)
+        \ ? 'git command failed'
+        \ : s:truncate(join(lines, ' '), 300)
+endfunction
+
+function! s:update_statusline(state) abort
+  let winid = get(a:state, 'branches_win', 0)
+  if !get(g:, 'git_changes_statusline', 1) || !s:win_exists(winid)
+    return
+  endif
+
+  let info = getwininfo(winid)
+  if empty(info) || info[0].tabnr != tabpagenr()
+    " The pane is in another tab page; win_execute() cannot reach it.
+    return
+  endif
+
+  let text = '%#GitChangesLabel#GitChanges%*'
+  let msg = get(a:state, 'status', '')
+  if !empty(msg)
+    let kind = get(a:state, 'status_kind', '')
+    let hl = kind ==# 'error' ? 'GitChangesStatusError'
+          \ : kind ==# 'busy' ? 'GitChangesStatusBusy'
+          \ : 'GitChangesStatusInfo'
+    let text .= printf(' %%#%s#%%<· %s%%*', hl, substitute(msg, '%', '%%', 'g'))
+  endif
+
+  if exists('*win_execute')
+    call win_execute(a:state.branches_win,
+          \ 'let &l:statusline = ' . string(text))
+  else
+    let cur = win_getid()
+    call win_gotoid(a:state.branches_win)
+    let &l:statusline = text
+    call win_gotoid(cur)
+  endif
+endfunction
+
+function! s:set_status(state, msg, ...) abort
+  let kind = a:0 ? a:1 : 'info'
+  let a:state.status = a:msg
+  let a:state.status_kind = kind
+
+  call s:update_statusline(a:state)
+  if kind ==# 'error'
+    call s:err(a:msg)
+  else
+    echomsg 'GitChanges: ' . a:msg
+  endif
+  redraw
+endfunction
+
 function! s:opt_int(name, default) abort
   let value = get(g:, a:name, a:default)
   return type(value) == type(0) && value > 0 ? value : a:default
@@ -395,6 +455,8 @@ function! s:init_branch_buffer(state) abort
     autocmd! CursorMoved <buffer>
     execute 'autocmd CursorMoved <buffer> call ' . s:sid . 'on_branch_cursor_moved()'
   augroup END
+
+  call s:update_statusline(a:state)
 endfunction
 
 function! s:move_cursor(delta) abort
@@ -731,12 +793,17 @@ function! s:toggle_branch_help() abort
   call s:load_branches(state, keep_name)
 endfunction
 
-function! s:git_do(root, args) abort
+function! s:git_run(root, args) abort
   let cmd = 'git --no-pager -c core.quotePath=false -c credential.interactive=never -C '
         \ . shellescape(a:root) . ' ' . a:args . ' 2>&1'
   let out = systemlist(cmd)
-  if v:shell_error
-    call s:err(empty(out) ? 'git command failed' : join(out, ' '))
+  return {'ok': v:shell_error == 0, 'out': out}
+endfunction
+
+function! s:git_do(root, args) abort
+  let result = s:git_run(a:root, a:args)
+  if !result.ok
+    call s:err(s:output_message(result.out))
     return 0
   endif
   return 1
@@ -821,6 +888,8 @@ function! s:refresh_all() abort
     return
   endif
 
+  call s:set_status(state, 'Refreshing...', 'busy')
+
   let delay = s:refresh_debounce_delay()
   if !exists('*timer_start') || delay <= 0
     call s:do_refresh_all(state)
@@ -898,6 +967,7 @@ function! s:do_refresh_all(state) abort
   finally
     let &lazyredraw = old_lazy
     let state.refreshing = 0
+    call s:set_status(state, 'Refreshed', 'info')
   endtry
 endfunction
 
@@ -1502,16 +1572,73 @@ function! s:reload_current_branch(state) abort
   endtry
 endfunction
 
+function! s:upstream_ref(root) abort
+  let result = s:git_run(a:root,
+        \ 'rev-parse --abbrev-ref --symbolic-full-name @{u}')
+  return result.ok && !empty(result.out) ? result.out[0] : ''
+endfunction
+
+function! s:has_upstream(root) abort
+  return !empty(s:upstream_ref(a:root))
+endfunction
+
+function! s:preferred_remote(root, ...) abort
+  let branch = a:0 ? a:1 : ''
+
+  let configured = get(g:, 'git_changes_push_remote', '')
+  if !empty(configured)
+    return configured
+  endif
+
+  if !empty(branch)
+    let branch_remote = s:git_one(a:root,
+          \ 'config --get ' . shellescape('branch.' . branch . '.remote'))
+    if !empty(branch_remote)
+      return branch_remote
+    endif
+  endif
+
+  let remotes = s:git(a:root, 'remote')
+  if empty(remotes)
+    return ''
+  endif
+  return index(remotes, 'origin') >= 0 ? 'origin' : remotes[0]
+endfunction
+
+function! s:push_result(state, out) abort
+  if match(a:out, 'Everything up-to-date') >= 0
+    return 'Everything up-to-date'
+  endif
+
+  let upstream = s:upstream_ref(a:state.root)
+  return empty(upstream) ? 'Push complete' : 'Pushed to ' . upstream
+endfunction
+
 function! s:pull_current() abort
   let state = s:cur_state()
   if empty(state)
     return
   endif
 
-  let ok = s:git_do(state.root, 'pull --no-rebase --no-edit')
+  call s:set_status(state, 'Pulling...', 'busy')
+  let result = s:git_run(state.root, 'pull --no-rebase --no-edit')
   call s:reload_current_branch(state)
-  if ok
-    echomsg 'Pull complete'
+
+  if !result.ok
+    let detail = s:output_message(result.out)
+    if detail =~? 'no tracking information\|no upstream branch'
+      call s:set_status(state, 'Cannot pull: no upstream branch. ' .
+            \ 'Press P to push and set the upstream first.', 'error')
+    else
+      call s:set_status(state, 'Pull failed: ' . detail, 'error')
+    endif
+    return
+  endif
+
+  if match(result.out, 'Already up to date') >= 0
+    call s:set_status(state, 'Already up to date', 'info')
+  else
+    call s:set_status(state, 'Pull complete', 'info')
   endif
 endfunction
 
@@ -1535,10 +1662,57 @@ function! s:push_current() abort
     return
   endif
 
-  if s:git_do(state.root, 'push')
-    echomsg 'Push complete'
-    call s:refresh_commit_marks(state)
+  if empty(s:resolve_ref(state.root, 'HEAD'))
+    call s:set_status(state, 'Cannot push: no commits yet', 'error')
+    return
   endif
+
+  call s:set_status(state, 'Pushing...', 'busy')
+
+  if s:has_upstream(state.root)
+    let result = s:git_run(state.root, 'push')
+    if !result.ok
+      call s:set_status(state, 'Push failed: ' . s:output_message(result.out),
+            \ 'error')
+      return
+    endif
+    call s:refresh_commit_marks(state)
+    call s:set_status(state, s:push_result(state, result.out), 'info')
+    return
+  endif
+
+  let branch = s:git_one(state.root, 'symbolic-ref --short -q HEAD')
+  if empty(branch)
+    call s:set_status(state, 'Cannot push: not on a branch (detached HEAD)',
+          \ 'error')
+    return
+  endif
+
+  let remote = s:preferred_remote(state.root, branch)
+  if empty(remote)
+    call s:set_status(state, 'Cannot push: no remote configured', 'error')
+    return
+  endif
+
+  if get(g:, 'git_changes_confirm_push_upstream', 1)
+    let question = printf('No upstream for "%s". Push to %s/%s and set upstream?',
+          \ branch, remote, branch)
+    if confirm(question, "&Yes\n&No", 1) != 1
+      call s:set_status(state, 'Push cancelled', 'info')
+      return
+    endif
+  endif
+
+  let result = s:git_run(state.root, 'push --set-upstream '
+        \ . shellescape(remote) . ' ' . shellescape(branch))
+  if !result.ok
+    call s:set_status(state, 'Push failed: ' . s:output_message(result.out),
+          \ 'error')
+    return
+  endif
+
+  call s:refresh_commit_marks(state)
+  call s:set_status(state, s:push_result(state, result.out), 'info')
 endfunction
 
 function! s:stage_current(mode) abort
@@ -2817,6 +2991,8 @@ function! s:open_tab(root, parsed, tabnr) abort
         \ 'file_timer': -1,
         \ 'commit_timer': -1,
         \ 'refresh_timer': -1,
+        \ 'status': '',
+        \ 'status_kind': 'info',
         \ }
 
   tabnew
