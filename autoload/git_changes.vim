@@ -1642,18 +1642,30 @@ function! s:pull_current() abort
   endif
 endfunction
 
-function! s:refresh_commit_marks(state) abort
+function! s:refresh_after_push(state) abort
   let index = a:state.commit_index
+  let keep_path = ''
+  if a:state.file_index >= 0 && a:state.file_index < len(a:state.files)
+    let keep_path = a:state.files[a:state.file_index].path
+  endif
+
   let a:state.updating = 1
   try
     call s:load_commits(a:state)
   finally
     let a:state.updating = 0
   endtry
-  if index >= 0 && index < len(a:state.commits)
-    call s:set_cursor(a:state.commits_win,
-          \ a:state.commits_header + 1 + index)
+
+  if empty(a:state.commits)
+    call s:show_no_commits(a:state)
+    return
   endif
+
+  let index = min([max([index, 0]), len(a:state.commits) - 1])
+  let a:state.commit_index = index
+  call s:set_cursor(a:state.commits_win,
+        \ a:state.commits_header + 1 + index)
+  call s:refresh_file_list(a:state, keep_path)
 endfunction
 
 function! s:push_current() abort
@@ -1676,7 +1688,7 @@ function! s:push_current() abort
             \ 'error')
       return
     endif
-    call s:refresh_commit_marks(state)
+    call s:refresh_after_push(state)
     call s:set_status(state, s:push_result(state, result.out), 'info')
     return
   endif
@@ -1711,7 +1723,7 @@ function! s:push_current() abort
     return
   endif
 
-  call s:refresh_commit_marks(state)
+  call s:refresh_after_push(state)
   call s:set_status(state, s:push_result(state, result.out), 'info')
 endfunction
 
