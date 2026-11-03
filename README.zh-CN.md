@@ -60,7 +60,7 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 :GitChanges v1.0 v2.0
 ```
 
-执行 `:GitChangesQuit` 或按 `<leader>gq` 关闭 tab。
+执行 `:GitChangesQuit` 关闭 tab。
 
 文件列表中的帮助默认隐藏，按 `?` 显示，再按 `?` 隐藏。
 
@@ -70,6 +70,7 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 | --- | --- |
 | `j` / `k` | 切换文件 |
 | `J` / `K` | 滚动 diff |
+| `Ctrl-d` / `Ctrl-u` | 半页滚动 diff |
 | `t` | 列表 / tree 样式切换 |
 | `?` | 显示 / 隐藏帮助 |
 | `r` | 刷新状态 |
@@ -77,6 +78,7 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 | `u` | unstage 文件 |
 | `-` | stage 或 unstage 文件 |
 | `d` | 丢弃未暂存改动，或删除未跟踪文件 |
+| `o` | 在新标签页打开当前文件（diff 窗口也可用） |
 | `yy` | 复制文件绝对路径 |
 | `c` | commit 已暂存内容 |
 | `p` | pull |
@@ -90,6 +92,7 @@ stage、unstage、discard、commit、pull、push 只对 `WORK` 条目生效。
 | --- | --- |
 | `j` / `k` | 切换 commit |
 | `J` / `K` | 滚动 diff |
+| `yy` | 复制完整 commit hash |
 
 ### 分支列表
 
@@ -97,12 +100,10 @@ stage、unstage、discard、commit、pull、push 只对 `WORK` 条目生效。
 | --- | --- |
 | `j` / `k` | 移动分支选择，不改变其他窗口 |
 | `<CR>` | 显示所选分支的 commit 和文件 |
-| `cc` | checkout 所选分支 |
+| `co` | checkout 所选分支 |
 | `n` | 从所选分支新建分支并切换过去 |
 | `d` | 删除所选本地分支 |
 | `yy` | 复制分支名 |
-
-使用 `Ctrl-w j` / `Ctrl-w k` 在文件、commit 和分支窗口之间移动。在左侧任意一个窗口中按 `Tab` 可以在这三个窗口之间循环切换。
 
 ## 配置
 
@@ -137,3 +138,51 @@ let g:git_changes_confirm_discard = 1
 " 删除分支前是否确认
 let g:git_changes_confirm_branch_delete = 1
 ```
+
+### 快捷键
+
+禁用全部插件快捷键：
+
+```vim
+let g:git_changes_keymaps_enabled = 0
+```
+
+自定义单个快捷键：
+
+```vim
+let g:git_changes_keymaps = {
+  \ 'open_file': 'O',
+  \ 'stage': 'S',
+  \ 'unstage': 'U',
+  \ 'toggle_stage': '',
+  \ 'quit': '<C-q>',
+  \ }
+```
+
+| 动作 | 默认按键 |
+| --- | --- |
+| `toggle_tree` | `t` |
+| `refresh` | `r` |
+| `stage` | `s` |
+| `unstage` | `u` |
+| `toggle_stage` | `-` |
+| `file_discard` | `d` |
+| `open_file` | `o` |
+| `scroll_half_down` | `<C-d>` |
+| `scroll_half_up` | `<C-u>` |
+| `copy_file` | `yy` |
+| `copy_commit` | `yy` |
+| `copy_branch` | `yy` |
+| `commit` | `c` |
+| `pull` | `p` |
+| `push` | `P` |
+| `new_branch` | `n` |
+| `branch_delete` | `d` |
+| `checkout_branch` | `co` |
+| `apply_branch` | `<CR>` |
+| `cycle_next` | `<Tab>` |
+| `cycle_prev` | `<S-Tab>` |
+| `pane_files` | `1` |
+| `pane_commits` | `2` |
+| `pane_branches` | `3` |
+| `quit` | 无 |

@@ -204,8 +204,93 @@ function! s:setup_diff_window() abort
 endfunction
 
 
+function! s:default_keymaps() abort
+  return {
+        \ 'toggle_tree': 't',
+        \ 'refresh': 'r',
+        \ 'stage': 's',
+        \ 'unstage': 'u',
+        \ 'toggle_stage': '-',
+        \ 'file_discard': 'd',
+        \ 'open_file': 'o',
+        \ 'scroll_half_down': '<C-d>',
+        \ 'scroll_half_up': '<C-u>',
+        \ 'copy_file': 'yy',
+        \ 'copy_commit': 'yy',
+        \ 'copy_branch': 'yy',
+        \ 'commit': 'c',
+        \ 'pull': 'p',
+        \ 'push': 'P',
+        \ 'new_branch': 'n',
+        \ 'branch_delete': 'd',
+        \ 'checkout_branch': 'co',
+        \ 'apply_branch': '<CR>',
+        \ 'cycle_next': '<Tab>',
+        \ 'cycle_prev': '<S-Tab>',
+        \ 'pane_files': '1',
+        \ 'pane_commits': '2',
+        \ 'pane_branches': '3',
+        \ 'quit': '',
+        \ }
+endfunction
+
+function! s:keymaps_enabled() abort
+  return get(g:, 'git_changes_keymaps_enabled', 1) ? 1 : 0
+endfunction
+
+function! s:keymaps() abort
+  let maps = s:default_keymaps()
+  let user = get(g:, 'git_changes_keymaps', {})
+  if type(user) == type({})
+    call extend(maps, user, 'force')
+  endif
+  return maps
+endfunction
+
+function! s:map_fixed(key, rhs) abort
+  if !s:keymaps_enabled()
+    return
+  endif
+  execute 'silent! nnoremap <buffer> <silent> ' . a:key . ' ' . a:rhs
+endfunction
+
+function! s:map_keys(action, rhs) abort
+  if !s:keymaps_enabled()
+    return
+  endif
+
+  let value = get(s:keymaps(), a:action, '')
+  if type(value) == type([])
+    let keys = value
+  elseif type(value) == type('')
+    let keys = [value]
+  else
+    return
+  endif
+
+  for key in keys
+    if empty(key)
+      continue
+    endif
+    execute 'silent! nnoremap <buffer> <silent> ' . key . ' ' . a:rhs
+  endfor
+endfunction
+
 function! s:map_quit() abort
-  execute 'nnoremap <buffer> <silent> <leader>gq :<C-u>GitChangesQuit<CR>'
+  call s:map_keys('quit', ':<C-u>GitChangesQuit<CR>')
+endfunction
+
+function! s:map_left_pane_keys() abort
+  call s:map_keys('pane_files', ':<C-u>call ' . s:sid . 'goto_left_pane(1)<CR>')
+  call s:map_keys('pane_commits', ':<C-u>call ' . s:sid . 'goto_left_pane(2)<CR>')
+  call s:map_keys('pane_branches', ':<C-u>call ' . s:sid . 'goto_left_pane(3)<CR>')
+endfunction
+
+function! s:map_left_action_keys() abort
+  call s:map_keys('commit', ':<C-u>call ' . s:sid . 'commit_current()<CR>')
+  call s:map_keys('pull', ':<C-u>call ' . s:sid . 'pull_current()<CR>')
+  call s:map_keys('push', ':<C-u>call ' . s:sid . 'push_current()<CR>')
+  call s:map_keys('new_branch', ':<C-u>call ' . s:sid . 'new_branch()<CR>')
 endfunction
 
 function! s:init_list_buffer(state, kind) abort
@@ -214,26 +299,31 @@ function! s:init_list_buffer(state, kind) abort
 
   call s:setup_list_window()
 
-  execute 'nnoremap <buffer> <silent> j :<C-u>call ' . s:sid . 'move_' . a:kind . '(1)<CR>'
-  execute 'nnoremap <buffer> <silent> k :<C-u>call ' . s:sid . 'move_' . a:kind . '(-1)<CR>'
-  execute 'nnoremap <buffer> <silent> <Down> :<C-u>call ' . s:sid . 'move_' . a:kind . '(1)<CR>'
-  execute 'nnoremap <buffer> <silent> <Up> :<C-u>call ' . s:sid . 'move_' . a:kind . '(-1)<CR>'
-  execute 'nnoremap <buffer> <silent> J :<C-u>call ' . s:sid . 'scroll_diff(1)<CR>'
-  execute 'nnoremap <buffer> <silent> K :<C-u>call ' . s:sid . 'scroll_diff(-1)<CR>'
-  execute 'nnoremap <buffer> <silent> <Tab> :<C-u>call ' . s:sid . 'cycle_left_pane()<CR>'
+  call s:map_fixed('j', ':<C-u>call ' . s:sid . 'move_cursor(1)<CR>')
+  call s:map_fixed('k', ':<C-u>call ' . s:sid . 'move_cursor(-1)<CR>')
+  call s:map_fixed('<Down>', ':<C-u>call ' . s:sid . 'move_cursor(1)<CR>')
+  call s:map_fixed('<Up>', ':<C-u>call ' . s:sid . 'move_cursor(-1)<CR>')
+  call s:map_fixed('J', ':<C-u>call ' . s:sid . 'scroll_diff(1)<CR>')
+  call s:map_fixed('K', ':<C-u>call ' . s:sid . 'scroll_diff(-1)<CR>')
+  call s:map_keys('cycle_next', ':<C-u>call ' . s:sid . 'cycle_left_pane(1)<CR>')
+  call s:map_keys('cycle_prev', ':<C-u>call ' . s:sid . 'cycle_left_pane(-1)<CR>')
+  call s:map_left_pane_keys()
+  call s:map_left_action_keys()
 
   if a:kind ==# 'files'
-    execute 'nnoremap <buffer> <silent> t :<C-u>call ' . s:sid . 'toggle_tree()<CR>'
-    execute 'nnoremap <buffer> <silent> ? :<C-u>call ' . s:sid . 'toggle_help()<CR>'
-    execute 'nnoremap <buffer> <silent> r :<C-u>call ' . s:sid . 'refresh_files()<CR>'
-    execute 'nnoremap <buffer> <silent> s :<C-u>call ' . s:sid . 'stage_current("stage")<CR>'
-    execute 'nnoremap <buffer> <silent> u :<C-u>call ' . s:sid . 'stage_current("unstage")<CR>'
-    execute 'nnoremap <buffer> <silent> - :<C-u>call ' . s:sid . 'stage_current("toggle")<CR>'
-    execute 'nnoremap <buffer> <silent> d :<C-u>call ' . s:sid . 'discard_current()<CR>'
-    execute 'nnoremap <buffer> <silent> yy :<C-u>call ' . s:sid . 'copy_file_path()<CR>'
-    execute 'nnoremap <buffer> <silent> c :<C-u>call ' . s:sid . 'commit_current()<CR>'
-    execute 'nnoremap <buffer> <silent> p :<C-u>call ' . s:sid . 'pull_current()<CR>'
-    execute 'nnoremap <buffer> <silent> P :<C-u>call ' . s:sid . 'push_current()<CR>'
+    call s:map_keys('toggle_tree', ':<C-u>call ' . s:sid . 'toggle_tree()<CR>')
+    call s:map_fixed('?', ':<C-u>call ' . s:sid . 'toggle_help()<CR>')
+    call s:map_keys('refresh', ':<C-u>call ' . s:sid . 'refresh_files()<CR>')
+    call s:map_keys('stage', ':<C-u>call ' . s:sid . 'stage_current("stage")<CR>')
+    call s:map_keys('unstage', ':<C-u>call ' . s:sid . 'stage_current("unstage")<CR>')
+    call s:map_keys('toggle_stage', ':<C-u>call ' . s:sid . 'stage_current("toggle")<CR>')
+    call s:map_keys('file_discard', ':<C-u>call ' . s:sid . 'discard_current()<CR>')
+    call s:map_keys('open_file', ':<C-u>call ' . s:sid . 'open_file()<CR>')
+    call s:map_keys('scroll_half_down', ':<C-u>call ' . s:sid . 'scroll_diff_half(1)<CR>')
+    call s:map_keys('scroll_half_up', ':<C-u>call ' . s:sid . 'scroll_diff_half(-1)<CR>')
+    call s:map_keys('copy_file', ':<C-u>call ' . s:sid . 'copy_file_path()<CR>')
+  elseif a:kind ==# 'commits'
+    call s:map_keys('copy_commit', ':<C-u>call ' . s:sid . 'copy_commit_hash()<CR>')
   endif
 
   call s:map_quit()
@@ -250,6 +340,7 @@ function! s:init_diff_buffer(state, side) abort
   let b:gc_kind = 'diff'
   let b:gc_side = a:side
   call s:setup_diff_window()
+  call s:map_keys('open_file', ':<C-u>call ' . s:sid . 'open_file()<CR>')
   call s:map_quit()
 endfunction
 
@@ -258,16 +349,18 @@ function! s:init_branch_buffer(state) abort
   let b:gc_kind = 'branches'
   call s:setup_list_window()
 
-  execute 'nnoremap <buffer> <silent> j :<C-u>call ' . s:sid . 'move_branches(1)<CR>'
-  execute 'nnoremap <buffer> <silent> k :<C-u>call ' . s:sid . 'move_branches(-1)<CR>'
-  execute 'nnoremap <buffer> <silent> <Down> :<C-u>call ' . s:sid . 'move_branches(1)<CR>'
-  execute 'nnoremap <buffer> <silent> <Up> :<C-u>call ' . s:sid . 'move_branches(-1)<CR>'
-  execute 'nnoremap <buffer> <silent> cc :<C-u>call ' . s:sid . 'checkout_branch()<CR>'
-  execute 'nnoremap <buffer> <silent> <CR> :<C-u>call ' . s:sid . 'apply_branch()<CR>'
-  execute 'nnoremap <buffer> <silent> <Tab> :<C-u>call ' . s:sid . 'cycle_left_pane()<CR>'
-  execute 'nnoremap <buffer> <silent> n :<C-u>call ' . s:sid . 'new_branch()<CR>'
-  execute 'nnoremap <buffer> <silent> d :<C-u>call ' . s:sid . 'delete_branch()<CR>'
-  execute 'nnoremap <buffer> <silent> yy :<C-u>call ' . s:sid . 'copy_branch_name()<CR>'
+  call s:map_fixed('j', ':<C-u>call ' . s:sid . 'move_cursor(1)<CR>')
+  call s:map_fixed('k', ':<C-u>call ' . s:sid . 'move_cursor(-1)<CR>')
+  call s:map_fixed('<Down>', ':<C-u>call ' . s:sid . 'move_cursor(1)<CR>')
+  call s:map_fixed('<Up>', ':<C-u>call ' . s:sid . 'move_cursor(-1)<CR>')
+  call s:map_keys('checkout_branch', ':<C-u>call ' . s:sid . 'checkout_branch()<CR>')
+  call s:map_keys('apply_branch', ':<C-u>call ' . s:sid . 'apply_branch()<CR>')
+  call s:map_keys('cycle_next', ':<C-u>call ' . s:sid . 'cycle_left_pane(1)<CR>')
+  call s:map_keys('cycle_prev', ':<C-u>call ' . s:sid . 'cycle_left_pane(-1)<CR>')
+  call s:map_left_pane_keys()
+  call s:map_left_action_keys()
+  call s:map_keys('branch_delete', ':<C-u>call ' . s:sid . 'delete_branch()<CR>')
+  call s:map_keys('copy_branch', ':<C-u>call ' . s:sid . 'copy_branch_name()<CR>')
   call s:map_quit()
 
   augroup git_changes
@@ -276,53 +369,53 @@ function! s:init_branch_buffer(state) abort
   augroup END
 endfunction
 
-
-function! s:move_files(delta) abort
-  let state = s:cur_state()
-  if empty(state) || empty(state.display_file_indexes)
+function! s:move_cursor(delta) abort
+  let target = line('.') + a:delta
+  if target < 1 || target > line('$')
     return
   endif
 
-  let indexes = state.display_file_indexes
-  let current = s:current_file_index(state)
-  if current < 0
-    let current = state.file_index
-  endif
+  call cursor(target, 1)
 
-  let pos = current >= 0 ? index(indexes, current) : -1
-  if pos < 0
-    let pos = a:delta > 0 ? -1 : len(indexes)
-  endif
-  let pos = max([0, min([len(indexes) - 1, pos + a:delta])])
-  let index = indexes[pos]
-
-  let changed = index != state.file_index
-  if changed
-    let state.file_index = index
-  endif
-  call s:goto_file_index(state, index)
-  if changed
-    call s:show_diff(state, state.files[index])
+  let kind = get(b:, 'gc_kind', '')
+  if kind ==# 'files'
+    call s:on_files_cursor_moved()
+  elseif kind ==# 'commits'
+    call s:on_commits_cursor_moved()
+  elseif kind ==# 'branches'
+    call s:on_branch_cursor_moved()
   endif
 endfunction
 
-function! s:move_commits(delta) abort
-  let state = s:cur_state()
-  if empty(state) || empty(state.commits)
-    return
+" Pick the diff window to scroll: the side with more content.
+function! s:diff_scroll_window(state) abort
+  let old_ok = a:state.old_win > 0 && win_id2win(a:state.old_win) > 0
+  let new_ok = a:state.new_win > 0 && win_id2win(a:state.new_win) > 0
+  if !old_ok && !new_ok
+    return 0
   endif
 
-  let index = state.commit_index
-  if index < 0
-    let index = 0
+  let winid = old_ok ? a:state.old_win : a:state.new_win
+  if old_ok && new_ok
+    let old_lines = s:buf_linecount(a:state.old_buf)
+    let new_lines = s:buf_linecount(a:state.new_buf)
+    if new_lines > old_lines
+      let winid = a:state.new_win
+    endif
+  endif
+  return winid
+endfunction
+
+function! s:scroll_diff_by(winid, delta, count) abort
+  let key = a:delta > 0 ? "\<C-e>" : "\<C-y>"
+  let keys = (a:count > 1 ? string(a:count) : '') . key
+  if exists('*win_execute')
+    call win_execute(a:winid, 'silent! normal! ' . keys)
   else
-    let index += a:delta
-  endif
-  let index = max([0, min([len(state.commits) - 1, index])])
-
-  call cursor(state.commits_header + 1 + index, 1)
-  if index != state.commit_index
-    call s:select_commit(state, index)
+    let curwin = win_getid()
+    call win_gotoid(a:winid)
+    execute 'silent! normal! ' . keys
+    call win_gotoid(curwin)
   endif
 endfunction
 
@@ -333,30 +426,30 @@ function! s:scroll_diff(delta) abort
     return
   endif
 
-  let old_ok = state.old_win > 0 && win_id2win(state.old_win) > 0
-  let new_ok = state.new_win > 0 && win_id2win(state.new_win) > 0
-  if !old_ok && !new_ok
+  let winid = s:diff_scroll_window(state)
+  if winid <= 0
+    return
+  endif
+  call s:scroll_diff_by(winid, a:delta, 1)
+endfunction
+
+" Scroll the right-hand diff by half a page.
+function! s:scroll_diff_half(delta) abort
+  let state = s:cur_state()
+  if empty(state)
     return
   endif
 
-  let winid = old_ok ? state.old_win : state.new_win
-  if old_ok && new_ok
-    let old_lines = s:buf_linecount(state.old_buf)
-    let new_lines = s:buf_linecount(state.new_buf)
-    if new_lines > old_lines
-      let winid = state.new_win
-    endif
+  let winid = s:diff_scroll_window(state)
+  if winid <= 0
+    return
   endif
-
-  let key = a:delta > 0 ? "\<C-e>" : "\<C-y>"
-  if exists('*win_execute')
-    call win_execute(winid, 'silent! normal! ' . key)
-  else
-    let curwin = win_getid()
-    call win_gotoid(winid)
-    execute 'silent! normal! ' . key
-    call win_gotoid(curwin)
+  let info = getwininfo(winid)
+  let lines_to_scroll = empty(info) ? 1 : info[0].height / 2
+  if lines_to_scroll < 1
+    let lines_to_scroll = 1
   endif
+  call s:scroll_diff_by(winid, a:delta, lines_to_scroll)
 endfunction
 
 function! s:on_files_cursor_moved() abort
@@ -366,7 +459,10 @@ function! s:on_files_cursor_moved() abort
   endif
 
   let offset = line('.') - state.files_header - 1
-  let index = get(state.file_line_map, offset, -1)
+  if offset < 0 || offset >= len(state.file_line_map)
+    return
+  endif
+  let index = state.file_line_map[offset]
   if index < 0 || index >= len(state.files) || index == state.file_index
     return
   endif
@@ -389,7 +485,7 @@ function! s:on_commits_cursor_moved() abort
   call s:select_commit(state, index)
 endfunction
 
-function! s:cycle_left_pane() abort
+function! s:cycle_left_pane(delta) abort
   let state = s:cur_state()
   if empty(state)
     return
@@ -400,7 +496,7 @@ function! s:cycle_left_pane() abort
   let target = 0
   for i in range(len(windows))
     if windows[i] == current
-      let target = (i + 1) % len(windows)
+      let target = (i + a:delta + len(windows)) % len(windows)
       break
     endif
   endfor
@@ -411,10 +507,22 @@ function! s:cycle_left_pane() abort
       call win_gotoid(winid)
       return
     endif
-    let target = (target + 1) % len(windows)
+    let target = (target + a:delta + len(windows)) % len(windows)
   endfor
 endfunction
 
+function! s:goto_left_pane(index) abort
+  let state = s:cur_state()
+  if empty(state) || a:index < 1 || a:index > 3
+    return
+  endif
+
+  let windows = [state.files_win, state.commits_win, state.branches_win]
+  let winid = windows[a:index - 1]
+  if winid > 0 && win_id2win(winid) > 0
+    call win_gotoid(winid)
+  endif
+endfunction
 
 function! s:empty_message(entry) abort
   if a:entry.kind ==# 'worktree'
@@ -651,6 +759,27 @@ function! s:copy_to_clipboard(text) abort
   return 0
 endfunction
 
+function! s:open_file() abort
+  let state = s:cur_state()
+  if empty(state) || empty(state.commits) || state.commit_index < 0
+    return
+  endif
+
+  let index = s:current_file_index(state)
+  if index < 0 || index >= len(state.files)
+    call s:err('select a file first')
+    return
+  endif
+
+  let path = state.root . '/' . state.files[index].path
+  if !filereadable(path)
+    call s:err('file does not exist: ' . state.files[index].path)
+    return
+  endif
+
+  execute 'tabnew ' . fnameescape(path)
+endfunction
+
 function! s:copy_file_path() abort
   let state = s:cur_state()
   if empty(state) || empty(state.commits) || state.commit_index < 0
@@ -671,15 +800,29 @@ function! s:copy_file_path() abort
   endif
 endfunction
 
-function! s:commit_current() abort
+function! s:copy_commit_hash() abort
   let state = s:cur_state()
   if empty(state) || empty(state.commits) || state.commit_index < 0
+    call s:err('select a commit first')
     return
   endif
 
   let entry = state.commits[state.commit_index]
-  if entry.kind !=# 'worktree'
-    call s:err('commit is only available for working tree changes')
+  if entry.kind !=# 'commit'
+    call s:err('select a commit first')
+    return
+  endif
+
+  if s:copy_to_clipboard(entry.sha)
+    echomsg 'Copied commit: ' . entry.short
+  else
+    call s:err('clipboard not available')
+  endif
+endfunction
+
+function! s:commit_current() abort
+  let state = s:cur_state()
+  if empty(state)
     return
   endif
 
@@ -728,11 +871,7 @@ endfunction
 
 function! s:pull_current() abort
   let state = s:cur_state()
-  if empty(state) || empty(state.commits) || state.commit_index < 0
-    return
-  endif
-  if state.commits[state.commit_index].kind !=# 'worktree'
-    call s:err('pull is only available for working tree changes')
+  if empty(state)
     return
   endif
 
@@ -745,11 +884,7 @@ endfunction
 
 function! s:push_current() abort
   let state = s:cur_state()
-  if empty(state) || empty(state.commits) || state.commit_index < 0
-    return
-  endif
-  if state.commits[state.commit_index].kind !=# 'worktree'
-    call s:err('push is only available for working tree changes')
+  if empty(state)
     return
   endif
 
@@ -848,8 +983,9 @@ function! s:load_branches(state, select_name) abort
 
   let header = [
         \ '# Branches',
-        \ '# j/k:select Enter:show Tab:pane',
-        \ '# cc:checkout n:new d:delete yy:copy',
+        \ '# j/k:select Enter:show 1/2/3 Tab/S-Tab',
+        \ '# c:commit p:pull P:push',
+        \ '# co:checkout n:new d:delete yy:copy',
         \ ]
   let a:state.branch_header = len(header)
   let a:state.branches = branches
@@ -906,27 +1042,6 @@ function! s:show_branch(state, branch) abort
   finally
     let a:state.updating = 0
   endtry
-endfunction
-
-function! s:move_branches(delta) abort
-  let state = s:cur_state()
-  if empty(state) || empty(state.branches)
-    return
-  endif
-
-  let index = state.branch_index
-  if index < 0
-    let index = 0
-  else
-    let index += a:delta
-  endif
-  let index = max([0, min([len(state.branches) - 1, index])])
-
-  let changed = index != state.branch_index
-  if changed
-    let state.branch_index = index
-  endif
-  call cursor(state.branch_header + 1 + index, 1)
 endfunction
 
 function! s:on_branch_cursor_moved() abort
@@ -1239,15 +1354,16 @@ function! s:files_header_lines(state, entry) abort
     endif
     if a:state.show_help
       call add(lines, '# s:stage u:unstage -:toggle t:tree')
-      call add(lines, '# r:refresh d:discard ?:hide')
-      call add(lines, '# yy:path c:commit p:pull P:push')
-      call add(lines, '# J/K:scroll Tab:pane <leader>gq:quit')
+      call add(lines, '# r:refresh d:discard o:open ?:hide')
+      call add(lines, '# yy:path c:commit p:pull P:push n:new')
+      call add(lines, '# J/K:scroll C-d/u:half 1/2/3 Tab/S-Tab')
     endif
   elseif a:entry.kind ==# 'compare'
     call add(lines, '# Range: ' . a:state.list_title)
     if a:state.show_help
       call add(lines, '# t:tree r:refresh ?:hide yy:path')
-      call add(lines, '# J/K:scroll Tab:pane <leader>gq:quit')
+      call add(lines, '# c:commit p:pull P:push n:new')
+      call add(lines, '# J/K:scroll C-d/u:half 1/2/3 Tab/S-Tab')
     endif
   else
     call add(lines, '# Author: ' . s:truncate(a:entry.author, 90))
@@ -1257,7 +1373,8 @@ function! s:files_header_lines(state, entry) abort
     endfor
     if a:state.show_help
       call add(lines, '# t:tree r:refresh ?:hide yy:path')
-      call add(lines, '# J/K:scroll Tab:pane <leader>gq:quit')
+      call add(lines, '# c:commit p:pull P:push n:new')
+      call add(lines, '# J/K:scroll C-d/u:half 1/2/3 Tab/S-Tab')
     endif
   endif
 
@@ -1411,7 +1528,10 @@ endfunction
 function! s:current_file_index(state) abort
   if get(b:, 'gc_kind', '') ==# 'files'
     let offset = line('.') - a:state.files_header - 1
-    return get(a:state.file_line_map, offset, -1)
+    if offset < 0 || offset >= len(a:state.file_line_map)
+      return -1
+    endif
+    return a:state.file_line_map[offset]
   endif
   return a:state.file_index
 endfunction
@@ -1755,7 +1875,6 @@ function! s:show_no_commits(state) abort
         \ ]
   if a:state.show_help
     call add(file_header, '# t:tree r:refresh ?:hide')
-    call add(file_header, '# <leader>gq:quit')
   endif
   call add(file_header, '')
 
@@ -1959,7 +2078,7 @@ function! git_changes#open(...) abort
 
   let width = s:opt_int('git_changes_width', 40)
   let total_left = max([12, &lines - 4])
-  let branch_height = max([4, min([
+  let branch_height = max([6, min([
         \ s:opt_int('git_changes_branches_height', 8), total_left / 4])])
   let commit_height = max([5, min([
         \ s:opt_int('git_changes_commits_height', 12), total_left / 3])])

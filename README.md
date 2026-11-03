@@ -60,7 +60,7 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 :GitChanges v1.0 v2.0
 ```
 
-Run `:GitChangesQuit` or press `<leader>gq` to close the tab.
+Run `:GitChangesQuit` to close the tab.
 
 Help is hidden by default in the file list. Press `?` to show it and `?` again to hide it.
 
@@ -70,6 +70,7 @@ Help is hidden by default in the file list. Press `?` to show it and `?` again t
 | --- | --- |
 | `j` / `k` | Move between files |
 | `J` / `K` | Scroll the diff |
+| `Ctrl-d` / `Ctrl-u` | Scroll the diff by half a page |
 | `t` | Toggle list/tree view |
 | `?` | Show/hide help |
 | `r` | Refresh status |
@@ -77,6 +78,7 @@ Help is hidden by default in the file list. Press `?` to show it and `?` again t
 | `u` | Unstage file |
 | `-` | Stage or unstage file |
 | `d` | Discard unstaged changes, or delete an untracked file |
+| `o` | Open the current file in a new tab (also in diff windows) |
 | `yy` | Copy the absolute file path |
 | `c` | Commit staged changes |
 | `p` | Pull |
@@ -90,6 +92,7 @@ Stage, unstage, discard, commit, pull, and push are available for the `WORK` ent
 | --- | --- |
 | `j` / `k` | Move between commits |
 | `J` / `K` | Scroll the diff |
+| `yy` | Copy the full commit hash |
 
 ### Branch list
 
@@ -97,12 +100,10 @@ Stage, unstage, discard, commit, pull, and push are available for the `WORK` ent
 | --- | --- |
 | `j` / `k` | Move branch selection without changing the other panes |
 | `<CR>` | Show the selected branch's commits and files |
-| `cc` | Check out the selected branch |
+| `co` | Check out the selected branch |
 | `n` | Create a branch from the selected branch and switch to it |
 | `d` | Delete the selected local branch |
 | `yy` | Copy the branch name |
-
-Use `Ctrl-w j` / `Ctrl-w k` to move between the file, commit, and branch panes. Press `Tab` in any of the three left panes to cycle focus among them.
 
 ## Configuration
 
@@ -137,3 +138,51 @@ let g:git_changes_confirm_discard = 1
 " Confirm before deleting a branch
 let g:git_changes_confirm_branch_delete = 1
 ```
+
+### Keymaps
+
+To disable every plugin shortcut:
+
+```vim
+let g:git_changes_keymaps_enabled = 0
+```
+
+Customize individual actions:
+
+```vim
+let g:git_changes_keymaps = {
+  \ 'open_file': 'O',
+  \ 'stage': 'S',
+  \ 'unstage': 'U',
+  \ 'toggle_stage': '',
+  \ 'quit': '<C-q>',
+  \ }
+```
+
+| Action | Default |
+| --- | --- |
+| `toggle_tree` | `t` |
+| `refresh` | `r` |
+| `stage` | `s` |
+| `unstage` | `u` |
+| `toggle_stage` | `-` |
+| `file_discard` | `d` |
+| `open_file` | `o` |
+| `scroll_half_down` | `<C-d>` |
+| `scroll_half_up` | `<C-u>` |
+| `copy_file` | `yy` |
+| `copy_commit` | `yy` |
+| `copy_branch` | `yy` |
+| `commit` | `c` |
+| `pull` | `p` |
+| `push` | `P` |
+| `new_branch` | `n` |
+| `branch_delete` | `d` |
+| `checkout_branch` | `co` |
+| `apply_branch` | `<CR>` |
+| `cycle_next` | `<Tab>` |
+| `cycle_prev` | `<S-Tab>` |
+| `pane_files` | `1` |
+| `pane_commits` | `2` |
+| `pane_branches` | `3` |
+| `quit` | none |
