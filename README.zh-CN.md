@@ -72,6 +72,7 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 | `Ctrl-d` / `Ctrl-u` | 半页滚动 diff |
 | `t` | 列表 / tree 样式切换 |
 | `?` | 显示 / 隐藏帮助 |
+| `Esc` | 回到工作区改动 |
 | `r` | 刷新文件、commit 和分支 |
 | `s` | stage 文件 |
 | `u` | unstage 文件 |
@@ -93,6 +94,7 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 | `J` / `K` | 滚动 diff |
 | `e` | 编辑未 push commit 的 message |
 | `yy` | 复制完整 commit hash |
+| `Esc` | 回到工作区改动 |
 
 
 ### 分支列表
@@ -204,6 +206,7 @@ let g:git_changes_keymaps = {
 | `apply_branch` | `<CR>` |
 | `cycle_next` | `<Tab>` |
 | `cycle_prev` | `<S-Tab>` |
+| `worktree` | `<Esc>` |
 | `pane_files` | `1` |
 | `pane_commits` | `2` |
 | `pane_branches` | `3` |

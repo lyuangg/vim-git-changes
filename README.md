@@ -72,6 +72,7 @@ Help is hidden by default in the file list. Press `?` to show it and `?` again t
 | `Ctrl-d` / `Ctrl-u` | Scroll the diff by half a page |
 | `t` | Toggle list/tree view |
 | `?` | Show/hide help |
+| `Esc` | Go back to the working tree changes |
 | `r` | Refresh files, commits, and branches |
 | `s` | Stage file |
 | `u` | Unstage file |
@@ -93,6 +94,7 @@ Help is hidden by default in the file list. Press `?` to show it and `?` again t
 | `J` / `K` | Scroll the diff |
 | `e` | Edit an unpushed commit message |
 | `yy` | Copy the full commit hash |
+| `Esc` | Go back to the working tree changes |
 
 
 ### Branch list
@@ -217,6 +219,7 @@ let g:git_changes_keymaps = {
 | `apply_branch` | `<CR>` |
 | `cycle_next` | `<Tab>` |
 | `cycle_prev` | `<S-Tab>` |
+| `worktree` | `<Esc>` |
 | `pane_files` | `1` |
 | `pane_commits` | `2` |
 | `pane_branches` | `3` |

@@ -68,6 +68,7 @@ echo
 echo "Try:"
 echo "  j / k        move between files"
 echo "  ?            show/hide help"
+echo "  Esc          back to working tree changes"
 echo "  t            toggle tree/list view"
 echo "  s / u / -    stage / unstage / toggle stage"
 echo "  r            refresh files / commits / branches"

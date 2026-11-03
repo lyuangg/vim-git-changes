@@ -298,6 +298,7 @@ function! s:default_keymaps() abort
         \ 'apply_branch': '<CR>',
         \ 'cycle_next': '<Tab>',
         \ 'cycle_prev': '<S-Tab>',
+        \ 'worktree': '<Esc>',
         \ 'pane_files': '1',
         \ 'pane_commits': '2',
         \ 'pane_branches': '3',
@@ -384,6 +385,7 @@ function! s:init_list_buffer(state, kind) abort
   call s:map_keys('cycle_prev', ':<C-u>call ' . s:sid . 'cycle_pane(-1)<CR>')
   call s:map_left_pane_keys()
   call s:map_left_action_keys()
+  call s:map_keys('worktree', ':<C-u>call ' . s:sid . 'goto_worktree()<CR>')
 
   if a:kind ==# 'files'
     call s:map_keys('toggle_tree', ':<C-u>call ' . s:sid . 'toggle_tree()<CR>')
@@ -721,6 +723,31 @@ function! s:goto_left_pane(index) abort
   if winid > 0 && win_id2win(winid) > 0
     call win_gotoid(winid)
   endif
+endfunction
+
+" Jump back to the working tree changes from any commit or compare view.
+function! s:goto_worktree() abort
+  let state = s:cur_state()
+  if empty(state)
+    return
+  endif
+  call s:flush_pending(state)
+
+  let branch = s:current_branch(state.root)
+  if empty(state.log_range) && (empty(state.log_ref) || state.log_ref ==# branch)
+    for index in range(len(state.commits))
+      if state.commits[index].kind ==# 'worktree'
+        if index != state.commit_index
+          call s:select_commit(state, index)
+        endif
+        return
+      endif
+    endfor
+  endif
+
+  " The current view has no working tree entry (another branch, a compare
+  " range, or the entry is disabled): reload the current branch.
+  call s:reload_current_branch(state)
 endfunction
 
 function! s:empty_message(entry) abort
@@ -2194,14 +2221,14 @@ function! s:files_header_lines(state, entry) abort
     if a:state.show_help
       call add(lines, '# s:stage u:unstage -:toggle t:tree')
       call add(lines, '# r:refresh d:discard o:open ?:hide')
-      call add(lines, '# yy:path c:commit p:pull P:push n:new')
+      call add(lines, '# Esc:worktree  yy:path c:commit p:pull P:push n:new')
       call add(lines, '# J/K:scroll C-d/u:half 1/2/3 Tab/S-Tab')
       call add(lines, '# H/L:scroll diff left/right')
     endif
   elseif a:entry.kind ==# 'compare'
     call add(lines, '# Range: ' . a:state.list_title)
     if a:state.show_help
-      call add(lines, '# t:tree r:refresh ?:hide yy:path')
+      call add(lines, '# t:tree r:refresh ?:hide yy:path Esc:worktree')
       call add(lines, '# c:commit p:pull P:push n:new')
       call add(lines, '# J/K:scroll C-d/u:half 1/2/3 Tab/S-Tab')
       call add(lines, '# H/L:scroll diff left/right')
@@ -2214,7 +2241,7 @@ function! s:files_header_lines(state, entry) abort
       call add(lines, '# ' . body_line)
     endfor
     if a:state.show_help
-      call add(lines, '# t:tree r:refresh ?:hide yy:path')
+      call add(lines, '# t:tree r:refresh ?:hide yy:path Esc:worktree')
       call add(lines, '# c:commit p:pull P:push n:new')
       call add(lines, '# J/K:scroll C-d/u:half 1/2/3 Tab/S-Tab')
       call add(lines, '# H/L:scroll diff left/right')
