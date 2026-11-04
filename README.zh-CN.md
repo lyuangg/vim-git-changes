@@ -212,6 +212,4 @@ let g:git_changes_keymaps = {
 | `pane_files` | `1` |
 | `pane_commits` | `2` |
 | `pane_branches` | `3` |
-| `diff_left` | `H` |
-| `diff_right` | `L` |
 | `quit` | `q` |
