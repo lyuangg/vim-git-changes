@@ -76,6 +76,8 @@ Help is hidden by default in the file list. Press `?` to show it and `?` again t
 | `r` | Refresh files, commits, and branches |
 | `s` | Stage file |
 | `u` | Unstage file |
+| `S` | Stage all working tree changes (including untracked files) |
+| `U` | Unstage all staged changes |
 | `-` | Stage or unstage file |
 | `d` | Discard unstaged changes, or delete an untracked file |
 | `o` | Open the current file in a new tab (also in diff windows) |
@@ -187,8 +189,6 @@ Customize individual actions:
 ```vim
 let g:git_changes_keymaps = {
   \ 'open_file': 'O',
-  \ 'stage': 'S',
-  \ 'unstage': 'U',
   \ 'toggle_stage': '',
   \ 'quit': '<C-q>',
   \ }
@@ -200,6 +200,8 @@ let g:git_changes_keymaps = {
 | `refresh` | `r` |
 | `stage` | `s` |
 | `unstage` | `u` |
+| `stage_all` | `S` |
+| `unstage_all` | `U` |
 | `toggle_stage` | `-` |
 | `file_discard` | `d` |
 | `open_file` | `o` |

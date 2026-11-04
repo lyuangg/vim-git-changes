@@ -76,6 +76,8 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 | `r` | 刷新文件、commit 和分支 |
 | `s` | stage 文件 |
 | `u` | unstage 文件 |
+| `S` | stage 所有工作区改动（包括未跟踪文件） |
+| `U` | unstage 所有已暂存改动 |
 | `-` | stage 或 unstage 文件 |
 | `d` | 丢弃未暂存改动，或删除未跟踪文件 |
 | `o` | 在新标签页打开当前文件（diff 窗口也可用） |
@@ -174,8 +176,6 @@ let g:git_changes_keymaps_enabled = 0
 ```vim
 let g:git_changes_keymaps = {
   \ 'open_file': 'O',
-  \ 'stage': 'S',
-  \ 'unstage': 'U',
   \ 'toggle_stage': '',
   \ 'quit': '<C-q>',
   \ }
@@ -187,6 +187,8 @@ let g:git_changes_keymaps = {
 | `refresh` | `r` |
 | `stage` | `s` |
 | `unstage` | `u` |
+| `stage_all` | `S` |
+| `unstage_all` | `U` |
 | `toggle_stage` | `-` |
 | `file_discard` | `d` |
 | `open_file` | `o` |

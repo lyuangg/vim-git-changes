@@ -279,6 +279,8 @@ function! s:default_keymaps() abort
         \ 'refresh': 'r',
         \ 'stage': 's',
         \ 'unstage': 'u',
+        \ 'stage_all': 'S',
+        \ 'unstage_all': 'U',
         \ 'toggle_stage': '-',
         \ 'file_discard': 'd',
         \ 'open_file': 'o',
@@ -392,6 +394,8 @@ function! s:init_list_buffer(state, kind) abort
     call s:map_fixed('?', ':<C-u>call ' . s:sid . 'toggle_help()<CR>')
     call s:map_keys('stage', ':<C-u>call ' . s:sid . 'stage_current("stage")<CR>')
     call s:map_keys('unstage', ':<C-u>call ' . s:sid . 'stage_current("unstage")<CR>')
+    call s:map_keys('stage_all', ':<C-u>call ' . s:sid . 'stage_all()<CR>')
+    call s:map_keys('unstage_all', ':<C-u>call ' . s:sid . 'unstage_all()<CR>')
     call s:map_keys('toggle_stage', ':<C-u>call ' . s:sid . 'stage_current("toggle")<CR>')
     call s:map_keys('file_discard', ':<C-u>call ' . s:sid . 'discard_current()<CR>')
     call s:map_keys('open_file', ':<C-u>call ' . s:sid . 'open_file()<CR>')
@@ -422,6 +426,8 @@ function! s:init_diff_buffer(state, side) abort
   call s:map_keys('open_file', ':<C-u>call ' . s:sid . 'open_file()<CR>')
   call s:map_keys('stage', ':<C-u>call ' . s:sid . 'stage_current("stage")<CR>')
   call s:map_keys('unstage', ':<C-u>call ' . s:sid . 'stage_current("unstage")<CR>')
+  call s:map_keys('stage_all', ':<C-u>call ' . s:sid . 'stage_all()<CR>')
+  call s:map_keys('unstage_all', ':<C-u>call ' . s:sid . 'unstage_all()<CR>')
   call s:map_keys('toggle_stage', ':<C-u>call ' . s:sid . 'stage_current("toggle")<CR>')
   call s:map_keys('commit', ':<C-u>call ' . s:sid . 'commit_current()<CR>')
   call s:map_keys('pull', ':<C-u>call ' . s:sid . 'pull_current()<CR>')
@@ -1802,6 +1808,72 @@ function! s:stage_current(mode) abort
   call s:refresh_file_list(state, file.path)
 endfunction
 
+" Stage every change in the working tree, including untracked files.
+function! s:stage_all() abort
+  let state = s:cur_state()
+  if empty(state) || empty(state.commits) || state.commit_index < 0
+    return
+  endif
+  call s:flush_pending(state)
+
+  let entry = state.commits[state.commit_index]
+  if entry.kind !=# 'worktree'
+    call s:err('S is only available for working tree changes')
+    return
+  endif
+
+  let counts = s:worktree_summary(state.files)
+  if counts[1] + counts[2] == 0
+    echomsg 'Nothing to stage'
+    return
+  endif
+
+  let keep_path = ''
+  if state.file_index >= 0 && state.file_index < len(state.files)
+    let keep_path = state.files[state.file_index].path
+  endif
+
+  if !s:git_do(state.root, 'add -A -- .')
+    return
+  endif
+
+  echomsg 'Staged all changes'
+  call s:refresh_file_list(state, keep_path)
+endfunction
+
+" Unstage every staged change in the working tree.
+function! s:unstage_all() abort
+  let state = s:cur_state()
+  if empty(state) || empty(state.commits) || state.commit_index < 0
+    return
+  endif
+  call s:flush_pending(state)
+
+  let entry = state.commits[state.commit_index]
+  if entry.kind !=# 'worktree'
+    call s:err('U is only available for working tree changes')
+    return
+  endif
+
+  let counts = s:worktree_summary(state.files)
+  if counts[0] == 0
+    echomsg 'Nothing to unstage'
+    return
+  endif
+
+  let keep_path = ''
+  if state.file_index >= 0 && state.file_index < len(state.files)
+    let keep_path = state.files[state.file_index].path
+  endif
+
+  if !s:git_do(state.root, 'reset -q HEAD -- .')
+    return
+  endif
+
+  echomsg 'Unstaged all changes'
+  call s:refresh_file_list(state, keep_path)
+endfunction
+
 
 function! s:load_branches(state, select_name) abort
   let current = s:git_one(a:state.root, 'symbolic-ref --short -q HEAD')
@@ -2219,7 +2291,7 @@ function! s:files_header_lines(state, entry) abort
             \ staged, unstaged, untracked))
     endif
     if a:state.show_help
-      call add(lines, '# s:stage u:unstage -:toggle t:tree')
+      call add(lines, '# s:stage u:unstage -:toggle S/U:all t:tree')
       call add(lines, '# r:refresh d:discard o:open ?:hide')
       call add(lines, '# Esc:worktree  yy:path c:commit p:pull P:push n:new')
       call add(lines, '# J/K:scroll C-d/u:half 1/2/3 Tab/S-Tab')
