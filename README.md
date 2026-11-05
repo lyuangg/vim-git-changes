@@ -111,9 +111,9 @@ tab is open for the repository, it is refreshed as well.
 
 The blame pane shows the short hash, time (to the minute), author, and commit
 summary; email is hidden by default. Every field can be toggled with the
-`g:git_changes_blame_*` options. It scrolls and moves together with the file.
-Press `q` in the pane to close it. The width defaults to fit the hash, time, and
-author; set `g:git_changes_blame_width` to see the email or summary as well.
+`g:git_changes_blame_*` options, and each field is highlighted with a different
+color. It scrolls and moves together with the file. Press `q` in the pane to
+close it. The width defaults to 50 columns.
 
 ### File diff
 
@@ -242,8 +242,8 @@ let g:git_changes_blame_author = 1
 let g:git_changes_blame_email = 0
 let g:git_changes_blame_message = 1
 
-" Blame pane width; 0 fits the hash, time, and author
-let g:git_changes_blame_width = 0
+" Blame pane width
+let g:git_changes_blame_width = 50
 
 " Commit list height limit
 let g:git_changes_commits_height = 12

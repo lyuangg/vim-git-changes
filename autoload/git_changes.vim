@@ -5107,57 +5107,65 @@ function! s:blame_flag(name, default) abort
   return get(g:, 'git_changes_blame_' . a:name, a:default) ? 1 : 0
 endfunction
 
-function! s:blame_auto_width() abort
-  let parts = []
-  if s:blame_flag('hash', 1)
-    call add(parts, '00000000')
-  endif
-  if s:blame_flag('time', 1)
-    call add(parts, '2026-11-05 20:06')
-  endif
-  if s:blame_flag('author', 1)
-    call add(parts, 'abcdefghijkl')
-  endif
-  return max([12, strchars(join(parts, ' ')) + 1])
+function! s:init_blame_highlights() abort
+  highlight def link GitChangesBlameHash Identifier
+  highlight def link GitChangesBlameTime Comment
+  highlight def link GitChangesBlameAuthor Function
+  highlight def link GitChangesBlameEmail Special
+  highlight def link GitChangesBlameMessage String
+  highlight def link GitChangesBlameUncommitted WarningMsg
 endfunction
 
-function! s:blame_text(sha, author, email, date, summary) abort
+function! s:blame_parts(sha, author, email, date, summary) abort
   let parts = []
 
   if a:sha =~# '^0\+$'
     if s:blame_flag('hash', 1)
-      call add(parts, strpart(a:sha, 0, 8))
+      call add(parts, ['GitChangesBlameHash', strpart(a:sha, 0, 8)])
     endif
     if s:blame_flag('time', 1) && !empty(a:date)
-      call add(parts, a:date)
+      call add(parts, ['GitChangesBlameTime', a:date])
     endif
     if s:blame_flag('author', 1)
-      call add(parts, 'Uncommitted')
+      call add(parts, ['GitChangesBlameUncommitted', 'Uncommitted'])
     endif
-    return join(parts, ' ')
+    return parts
   endif
 
   if s:blame_flag('hash', 1)
-    call add(parts, strpart(a:sha, 0, 8))
+    call add(parts, ['GitChangesBlameHash', strpart(a:sha, 0, 8)])
   endif
   if s:blame_flag('time', 1) && !empty(a:date)
-    call add(parts, a:date)
+    call add(parts, ['GitChangesBlameTime', a:date])
   endif
   if s:blame_flag('author', 1)
-    call add(parts, s:truncate(a:author, 12))
+    call add(parts, ['GitChangesBlameAuthor', s:truncate(a:author, 12)])
   endif
   if s:blame_flag('email', 0) && !empty(a:email)
-    call add(parts, '<' . s:truncate(a:email, 24) . '>')
+    call add(parts, ['GitChangesBlameEmail', '<' . s:truncate(a:email, 24) . '>'])
   endif
   if s:blame_flag('message', 1) && !empty(a:summary)
-    call add(parts, s:truncate(a:summary, 48))
+    call add(parts, ['GitChangesBlameMessage', s:truncate(a:summary, 48)])
   endif
-  return join(parts, ' ')
+  return parts
+endfunction
+
+function! s:blame_text(parts) abort
+  return join(map(copy(a:parts), 'v:val[1]'), ' ')
+endfunction
+
+function! s:blame_highlight(matches) abort
+  for [group, positions] in items(a:matches)
+    if !empty(positions)
+      call matchaddpos(group, positions)
+    endif
+  endfor
 endfunction
 
 " Parse `git blame --line-porcelain` into one display line per file line.
 function! s:parse_blame(out) abort
   let lines = []
+  let matches = {}
   let meta = {}
   let i = 0
   let total = len(a:out)
@@ -5200,10 +5208,21 @@ function! s:parse_blame(out) abort
     if i < total && a:out[i][0] ==# "\t"
       let i += 1
     endif
-    call add(lines, s:blame_text(sha, author, email, date, summary))
+
+    let parts = s:blame_parts(sha, author, email, date, summary)
+    let lnum = len(lines) + 1
+    let col = 1
+    for [group, value] in parts
+      if !has_key(matches, group)
+        let matches[group] = []
+      endif
+      call add(matches[group], [lnum, col, strlen(value)])
+      let col += strlen(value) + 1
+    endfor
+    call add(lines, s:blame_text(parts))
   endwhile
 
-  return lines
+  return {'lines': lines, 'matches': matches}
 endfunction
 
 function! s:blame_lines(root, path, modified) abort
@@ -5308,10 +5327,11 @@ function! git_changes#blame() abort
   let modified = &modified
   let file_wrap = &wrap
 
-  let blame_lines = s:blame_lines(root, path, modified)
+  let blame = s:blame_lines(root, path, modified)
   if v:shell_error
     return
   endif
+  let blame_lines = blame.lines
 
   " Keep the pane aligned even for empty files.
   let target = line('$')
@@ -5320,6 +5340,9 @@ function! git_changes#blame() abort
   endwhile
   if len(blame_lines) > target
     call remove(blame_lines, target, -1)
+    for key in keys(blame.matches)
+      call filter(blame.matches[key], 'v:val[0] <= target')
+    endfor
   endif
 
   leftabove vertical split
@@ -5332,9 +5355,11 @@ function! git_changes#blame() abort
   setlocal nonumber norelativenumber nolist nowrap
   setlocal signcolumn=no foldcolumn=0 nospell nomodeline
   setlocal nomodifiable
-  let configured = get(g:, 'git_changes_blame_width', 0)
+  call s:init_blame_highlights()
+  call s:blame_highlight(blame.matches)
+  let configured = get(g:, 'git_changes_blame_width', 50)
   if type(configured) != type(0) || configured <= 0
-    let configured = s:blame_auto_width()
+    let configured = 50
   endif
   execute 'vertical resize ' . max([12, configured])
   execute 'nnoremap <buffer> <silent> q :<C-u>call '
