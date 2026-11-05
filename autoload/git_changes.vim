@@ -2054,7 +2054,6 @@ function! s:stage_current(mode) abort
 
   let file = state.files[index]
   let paths = s:file_paths(file)[2]
-  let path_args = join(map(copy(paths), 'shellescape(v:val)'), ' ')
 
   let do_stage = a:mode ==# 'stage'
   if a:mode ==# 'unstage'
@@ -2067,12 +2066,19 @@ function! s:stage_current(mode) abort
   endif
 
   if do_stage
-    if !s:git_do(state.root, 'add -A -- ' . path_args)
+    let add_paths = s:addable_paths(state.root, paths)
+    if empty(add_paths)
+      echomsg 'Nothing to stage: ' . file.path
+      return
+    endif
+    if !s:git_do(state.root,
+          \ 'add -A -- ' . s:path_args(add_paths))
       return
     endif
     echomsg 'Staged: ' . file.path
   else
-    if !s:git_do(state.root, 'reset -q HEAD -- ' . path_args)
+    if !s:git_do(state.root,
+          \ 'reset -q HEAD -- ' . s:path_args(paths))
       return
     endif
     echomsg 'Unstaged: ' . file.path
@@ -3185,6 +3191,25 @@ function! s:file_paths(file) abort
     call add(paths, new_path)
   endif
   return [old_path, new_path, paths]
+endfunction
+
+function! s:path_args(paths) abort
+  return join(map(copy(a:paths), 'shellescape(v:val)'), ' ')
+endfunction
+
+" `git add -A` fails with "pathspec did not match any files" for a path that is
+" absent from both the index and the worktree. That happens once a rename or a
+" deletion is fully staged, so drop those paths before staging.
+function! s:addable_paths(root, paths) abort
+  let result = []
+  for path in a:paths
+    if !empty(getftype(a:root . '/' . path))
+          \ || !empty(s:git_one(a:root,
+          \       'ls-files --error-unmatch -- ' . shellescape(path)))
+      call add(result, path)
+    endif
+  endfor
+  return result
 endfunction
 
 function! s:worktree_file_is_binary(root, path) abort
