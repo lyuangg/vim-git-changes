@@ -74,12 +74,19 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 展开完整文件，用 `zo` / `zc` 折叠或展开当前块，或设置
 `g:git_changes_fold = 0` 关闭折叠。
 
-### Commit / Pull / Push 命令
+### Git 命令
 
 不需要进入 GitChanges 窗口，在任意 buffer 里都能执行；如果当前仓库已经打开了
 GitChanges 窗口，执行后也会同步刷新。
 
 ```vim
+" stage / unstage / discard 当前文件，也可以带路径
+:GitChangesStage
+:GitChangesStage src/main.c
+:GitChangesUnstage
+:GitChangesDiscard
+:GitChangesDiscard src/main.c
+
 " 提交已暂存内容；不带参数时会提示输入 commit message
 :GitChangesCommit
 :GitChangesCommit fix typo in README
@@ -99,8 +106,9 @@ GitChanges 窗口，执行后也会同步刷新。
 :GitChangesBlame
 ```
 
-blame 窗口会与文件同步滚动、同步光标；在 blame 窗口中按 `q` 关闭。
-窗口宽度用 `g:git_changes_blame_width` 配置（默认 36）。
+blame 窗口显示短 hash、时间（精确到分钟）、作者、邮箱和 commit message，
+并与文件同步滚动、同步光标；在 blame 窗口中按 `q` 关闭。
+窗口宽度用 `g:git_changes_blame_width` 配置（默认 72，最大不超过屏幕一半）。
 
 ### 单文件 diff
 
@@ -209,7 +217,7 @@ let g:git_changes_fold = 1
 let g:git_changes_width = 40
 
 " blame 窗口宽度
-let g:git_changes_blame_width = 36
+let g:git_changes_blame_width = 72
 
 " commit 列表高度上限
 let g:git_changes_commits_height = 12

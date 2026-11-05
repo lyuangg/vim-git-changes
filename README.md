@@ -33,6 +33,9 @@ return {
       "GitChangesPull",
       "GitChangesPush",
       "GitChangesBlame",
+      "GitChangesStage",
+      "GitChangesUnstage",
+      "GitChangesDiscard",
     },
   },
 }
@@ -74,12 +77,19 @@ Diff panes fold unchanged blocks by default, both in the main browser and in
 the file diff views. Press `zR` to show the full files, use `zo` / `zc` to
 toggle one fold, or set `g:git_changes_fold = 0` to keep everything expanded.
 
-### Commit, pull, push
+### Git commands
 
 These run from any buffer without opening the GitChanges tab. If a GitChanges
 tab is open for the repository, it is refreshed as well.
 
 ```vim
+" Stage, unstage, or discard the current file (or an optional path)
+:GitChangesStage
+:GitChangesStage src/main.c
+:GitChangesUnstage
+:GitChangesDiscard
+:GitChangesDiscard src/main.c
+
 " Commit staged changes; asks for a message unless one is given
 :GitChangesCommit
 :GitChangesCommit fix typo in README
@@ -99,8 +109,10 @@ tab is open for the repository, it is refreshed as well.
 :GitChangesBlame
 ```
 
-The blame pane scrolls and moves together with the file. Press `q` in the pane
-to close it. Set `g:git_changes_blame_width` to change its width (default 36).
+The blame pane shows the short hash, time (to the minute), author, email, and
+commit summary. It scrolls and moves together with the file. Press `q` in the
+pane to close it. Set `g:git_changes_blame_width` to change its width (default
+72, capped at half the screen).
 
 ### File diff
 
@@ -223,7 +235,7 @@ let g:git_changes_fold = 1
 let g:git_changes_width = 40
 
 " Blame pane width
-let g:git_changes_blame_width = 36
+let g:git_changes_blame_width = 72
 
 " Commit list height limit
 let g:git_changes_commits_height = 12

@@ -12,3 +12,6 @@ command! -nargs=? -complete=customlist,git_changes#complete_commit GitChangesCom
 command! -bar GitChangesPull call git_changes#pull()
 command! -bar GitChangesPush call git_changes#push()
 command! -bar GitChangesBlame call git_changes#blame()
+command! -nargs=? -complete=file GitChangesStage call git_changes#stage(<q-args>)
+command! -nargs=? -complete=file GitChangesUnstage call git_changes#unstage(<q-args>)
+command! -nargs=? -complete=file GitChangesDiscard call git_changes#discard(<q-args>)

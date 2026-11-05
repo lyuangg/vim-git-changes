@@ -1331,58 +1331,67 @@ function! s:discard_current() abort
   endif
 
   let file = state.files[index]
-  let xy = get(file, 'status_text', '')
-  let abs = state.root . '/' . file.path
+  if !s:discard_file(state.root, file)
+    return
+  endif
+  call s:refresh_file_list(state, file.path)
+endfunction
+
+" Discard the unstaged changes of {file} (or delete it when untracked).
+" Returns 1 when something was discarded.
+function! s:discard_file(root, file) abort
+  let xy = get(a:file, 'status_text', '')
+  let abs = a:root . '/' . a:file.path
 
   if xy ==# '??'
     if get(g:, 'git_changes_confirm_discard', 1)
-          \ && s:prompt_confirm('Delete untracked file ' . file.path . '?',
+          \ && s:prompt_confirm('Delete untracked file ' . a:file.path . '?',
           \             "&Yes\n&No", 2) != 1
-      return
+      return 0
     endif
     if delete(abs) != 0
-      call s:err('failed to delete: ' . file.path)
-      return
+      call s:err('failed to delete: ' . a:file.path)
+      return 0
     endif
-    echomsg 'Deleted: ' . file.path
-  else
-    let worktree_status = strlen(xy) >= 2 ? strpart(xy, 1, 1) : ' '
-    if worktree_status ==# ' ' || worktree_status ==# '?'
-      echomsg 'No unstaged changes: ' . file.path
-      return
-    endif
-
-    if get(g:, 'git_changes_confirm_discard', 1)
-          \ && s:prompt_confirm('Discard unstaged changes for ' . file.path . '?',
-          \             "&Yes\n&No", 2) != 1
-      return
-    endif
-
-    let oldpath = get(file, 'oldpath', '')
-    let index_status = strpart(xy, 0, 1)
-    let target = file.path
-    if index_status ==# ' ' && !empty(oldpath)
-      let target = oldpath
-    endif
-    if !s:git_do(state.root, 'checkout -- ' . shellescape(target))
-      return
-    endif
-
-    if index_status ==# ' ' && !empty(oldpath) && oldpath !=# file.path
-      let abs_new = state.root . '/' . file.path
-      if filereadable(abs_new)
-        let tracked = !empty(s:git_one(state.root,
-              \ 'ls-files --error-unmatch -- ' . shellescape(file.path)))
-        if !tracked
-          call delete(abs_new)
-        endif
-      endif
-    endif
-
-    echomsg 'Discarded unstaged changes: ' . file.path
+    echomsg 'Deleted: ' . a:file.path
+    return 1
   endif
 
-  call s:refresh_file_list(state, file.path)
+  let worktree_status = strlen(xy) >= 2 ? strpart(xy, 1, 1) : ' '
+  if worktree_status ==# ' ' || worktree_status ==# '?'
+    echomsg 'No unstaged changes: ' . a:file.path
+    return 0
+  endif
+
+  if get(g:, 'git_changes_confirm_discard', 1)
+        \ && s:prompt_confirm('Discard unstaged changes for ' . a:file.path . '?',
+        \             "&Yes\n&No", 2) != 1
+    return 0
+  endif
+
+  let oldpath = get(a:file, 'oldpath', '')
+  let index_status = strpart(xy, 0, 1)
+  let target = a:file.path
+  if index_status ==# ' ' && !empty(oldpath)
+    let target = oldpath
+  endif
+  if !s:git_do(a:root, 'checkout -- ' . shellescape(target))
+    return 0
+  endif
+
+  if index_status ==# ' ' && !empty(oldpath) && oldpath !=# a:file.path
+    let abs_new = a:root . '/' . a:file.path
+    if filereadable(abs_new)
+      let tracked = !empty(s:git_one(a:root,
+            \ 'ls-files --error-unmatch -- ' . shellescape(a:file.path)))
+      if !tracked
+        call delete(abs_new)
+      endif
+    endif
+  endif
+
+  echomsg 'Discarded unstaged changes: ' . a:file.path
+  return 1
 endfunction
 
 function! s:copy_to_clipboard(text) abort
@@ -2683,7 +2692,11 @@ function! s:files_header_lines(state, entry) abort
       call add(lines, '# H/L:scroll diff left/right')
     endif
   else
-    call add(lines, '# Author: ' . s:truncate(a:entry.author, 90))
+    let author = a:entry.author
+    if !empty(get(a:entry, 'email', ''))
+      let author .= ' <' . a:entry.email . '>'
+    endif
+    call add(lines, '# Author: ' . s:truncate(author, 90))
     call add(lines, '# Date:   ' . a:entry.date)
     call add(lines, '# ' . s:truncate(a:entry.subject, 90))
     for body_line in s:commit_body_lines(a:state, a:entry)
@@ -2940,7 +2953,7 @@ function! s:load_commits(state, ...) abort
   endif
   call extend(args, ['--date=short', '--skip=' . skip,
         \ '--max-count=' . (want + 1),
-        \ '--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%ad'])
+        \ '--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%ae%x1f%ad'])
   if !empty(a:state.log_range)
     call add(args, a:state.log_range)
   elseif !empty(a:state.log_ref)
@@ -2963,7 +2976,8 @@ function! s:apply_commits(state, mode, want, on_done, result) abort
             \ 'short': parts[1],
             \ 'subject': parts[2],
             \ 'author': get(parts, 3, ''),
-            \ 'date': get(parts, 4, ''),
+            \ 'email': get(parts, 4, ''),
+            \ 'date': get(parts, 5, ''),
             \ 'unpushed': 0,
             \ })
     endif
@@ -3968,6 +3982,127 @@ function! git_changes#quit() abort
   call s:quit_state(state)
 endfunction
 
+" Resolve an optional command argument to a path relative to the repo root.
+function! s:resolve_path_arg(root, arg) abort
+  if empty(a:arg)
+    return s:current_repo_path(a:root)
+  endif
+  if a:arg =~# '^/'
+    return s:repo_relative_path(a:root, a:arg)
+  endif
+
+  let abs = fnamemodify(a:arg, ':p')
+  let rel = s:repo_relative_path(a:root, abs)
+  if !empty(rel) && !empty(getftype(abs))
+    return rel
+  endif
+  return a:arg
+endfunction
+
+" Worktree status entry for {path}, used by the stage/unstage/discard commands.
+function! s:status_entry(root, path) abort
+  let out = s:git(a:root, 'status --porcelain -- ' . shellescape(a:path))
+  let files = s:parse_worktree_status(out)
+  for file in files
+    if file.path ==# a:path || get(file, 'oldpath', '') ==# a:path
+      return file
+    endif
+  endfor
+  return empty(files) ? {} : files[0]
+endfunction
+
+function! s:refresh_files_for_root(root, path) abort
+  let state = s:find_state_for_root(a:root)
+  if !empty(state)
+    call s:refresh_file_list(state, a:path)
+  endif
+endfunction
+
+" Stage, unstage, and discard files from any buffer. The optional argument is
+" a path; without it the current file is used.
+function! git_changes#stage(...) abort
+  let root = s:repo_root()
+  if empty(root)
+    call s:err('not inside a Git repository')
+    return
+  endif
+
+  let path = s:resolve_path_arg(root, a:0 ? a:1 : '')
+  if empty(path)
+    call s:err('GitChangesStage: no file in the current buffer')
+    return
+  endif
+
+  let file = s:status_entry(root, path)
+  let paths = empty(file) ? [path] : s:file_paths(file)[2]
+  let add_paths = s:addable_paths(root, paths)
+  if empty(add_paths)
+    echomsg 'Nothing to stage: ' . path
+    return
+  endif
+  if !s:git_do(root, 'add -A -- ' . s:path_args(add_paths))
+    return
+  endif
+
+  echomsg 'Staged: ' . path
+  call s:refresh_files_for_root(root, path)
+endfunction
+
+function! git_changes#unstage(...) abort
+  let root = s:repo_root()
+  if empty(root)
+    call s:err('not inside a Git repository')
+    return
+  endif
+
+  let path = s:resolve_path_arg(root, a:0 ? a:1 : '')
+  if empty(path)
+    call s:err('GitChangesUnstage: no file in the current buffer')
+    return
+  endif
+
+  let file = s:status_entry(root, path)
+  let paths = empty(file) ? [path] : s:file_paths(file)[2]
+  if !s:has_staged_changes(root, paths)
+    echomsg 'Not staged: ' . path
+    return
+  endif
+
+  let args = empty(s:resolve_ref(root, 'HEAD'))
+        \ ? 'rm -q --cached -- '
+        \ : 'reset -q HEAD -- '
+  if !s:git_do(root, args . s:path_args(paths))
+    return
+  endif
+
+  echomsg 'Unstaged: ' . path
+  call s:refresh_files_for_root(root, path)
+endfunction
+
+function! git_changes#discard(...) abort
+  let root = s:repo_root()
+  if empty(root)
+    call s:err('not inside a Git repository')
+    return
+  endif
+
+  let path = s:resolve_path_arg(root, a:0 ? a:1 : '')
+  if empty(path)
+    call s:err('GitChangesDiscard: no file in the current buffer')
+    return
+  endif
+
+  let file = s:status_entry(root, path)
+  if empty(file)
+    echomsg 'No changes: ' . path
+    return
+  endif
+  if !s:discard_file(root, file)
+    return
+  endif
+  call s:refresh_files_for_root(root, path)
+endfunction
+
 " Commit, pull, and push from any buffer without opening the GitChanges tab.
 function! git_changes#commit(...) abort
   let root = s:repo_root()
@@ -4968,10 +5103,19 @@ endfunction
 " file line. Both windows scroll and move together; q closes the pane.
 " ============================================================================
 
-function! s:blame_text(sha, author, date) abort
-  let author = a:sha =~# '^0\+$' ? 'Uncommitted' : a:author
-  return strpart(a:sha, 0, 8) . ' ' . s:truncate(author, 12)
-        \ . ' ' . a:date
+function! s:blame_text(sha, author, email, date, summary) abort
+  if a:sha =~# '^0\+$'
+    return strpart(a:sha, 0, 8) . ' Uncommitted'
+  endif
+
+  let parts = [strpart(a:sha, 0, 8), a:date, s:truncate(a:author, 12)]
+  if !empty(a:email)
+    call add(parts, '<' . s:truncate(a:email, 24) . '>')
+  endif
+  if !empty(a:summary)
+    call add(parts, s:truncate(a:summary, 48))
+  endif
+  return join(parts, ' ')
 endfunction
 
 " Parse `git blame --line-porcelain` into one display line per file line.
@@ -4990,29 +5134,36 @@ function! s:parse_blame(out) abort
 
     let sha = strpart(line, 0, 40)
     let author = ''
+    let email = ''
     let date = ''
+    let summary = ''
     let i += 1
     while i < total && a:out[i][0] !=# "\t"
       let field = a:out[i]
       if field =~# '^author '
         let author = strpart(field, 7)
+      elseif field =~# '^author-mail '
+        let email = substitute(strpart(field, 12), '^<\(.*\)>$', '\1', '')
       elseif field =~# '^author-time '
-        let date = strftime('%Y-%m-%d', str2nr(strpart(field, 12)))
+        let date = strftime('%Y-%m-%d %H:%M',
+              \ str2nr(strpart(field, 12)))
+      elseif field =~# '^summary '
+        let summary = strpart(field, 8)
       endif
       let i += 1
     endwhile
 
     if !empty(author)
-      let meta[sha] = [author, date]
+      let meta[sha] = [author, email, date, summary]
     elseif has_key(meta, sha)
-      let [author, date] = meta[sha]
+      let [author, email, date, summary] = meta[sha]
     endif
 
     " Skip the content line that terminates the record.
     if i < total && a:out[i][0] ==# "\t"
       let i += 1
     endif
-    call add(lines, s:blame_text(sha, author, date))
+    call add(lines, s:blame_text(sha, author, email, date, summary))
   endwhile
 
   return lines
@@ -5144,7 +5295,9 @@ function! git_changes#blame() abort
   setlocal nonumber norelativenumber nolist nowrap
   setlocal signcolumn=no foldcolumn=0 nospell nomodeline
   setlocal nomodifiable
-  execute 'vertical resize ' . s:opt_int('git_changes_blame_width', 36)
+  let blame_width = s:opt_int('git_changes_blame_width', 72)
+  let blame_width = min([blame_width, max([24, &columns / 2])])
+  execute 'vertical resize ' . blame_width
   execute 'nnoremap <buffer> <silent> q :<C-u>call '
         \ . s:sid . 'blame_close()<CR>'
 
