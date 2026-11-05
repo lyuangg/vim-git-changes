@@ -106,6 +106,9 @@ toggle one fold, or set `g:git_changes_fold = 0` to keep everything expanded.
 | `u` | Unstage the current file |
 | `D` | Discard unstaged changes for the file |
 | `dS` | Toggle staged comparison (`git diff --staged`) |
+| `cc` | Commit staged changes |
+| `C` | Commit staged changes using an editor with a status template |
+| `gs` | Open the main GitChanges view |
 | `Tab` / `S-Tab` | Switch between the two windows |
 | `]c` / `[c` | Jump to the next / previous hunk |
 | `zo` / `zc` | Open / close a fold |
@@ -136,6 +139,7 @@ toggle one fold, or set `g:git_changes_fold = 0` to keep everything expanded.
 | `cb` | Create a branch from the selected branch and switch to it |
 | `p` | Pull |
 | `P` | Push |
+| `gs` | Open the main GitChanges view |
 | `q` | Close the GitChanges tab |
 
 ### Commit list
@@ -272,6 +276,7 @@ let g:git_changes_keymaps = {
 | `load_more` | `l` |
 | `commit` | `cc` |
 | `commit_editor` | `C` |
+| `open_main` | `gs` |
 | `pull` | `p` |
 | `push` | `P` |
 | `new_branch` | `cb` |

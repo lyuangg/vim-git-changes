@@ -526,6 +526,7 @@ function! s:default_keymaps() abort
         \ 'load_more': 'l',
         \ 'commit': 'cc',
         \ 'commit_editor': 'C',
+        \ 'open_main': 'gs',
         \ 'pull': 'p',
         \ 'push': 'P',
         \ 'new_branch': 'cb',
@@ -604,6 +605,10 @@ function! s:map_left_action_keys() abort
   call s:map_keys('new_branch', ':<C-u>call ' . s:sid . 'new_branch()<CR>')
 endfunction
 
+function! s:map_open_main() abort
+  call s:map_keys('open_main', ':<C-u>GitChanges<CR>')
+endfunction
+
 function! s:init_list_buffer(state, kind) abort
   let b:git_changes = a:state
   let b:gc_kind = a:kind
@@ -621,6 +626,7 @@ function! s:init_list_buffer(state, kind) abort
   call s:map_keys('cycle_prev', ':<C-u>call ' . s:sid . 'cycle_pane(-1)<CR>')
   call s:map_left_pane_keys()
   call s:map_left_action_keys()
+  call s:map_open_main()
   call s:map_keys('worktree', ':<C-u>call ' . s:sid . 'goto_worktree()<CR>')
 
   if a:kind ==# 'files'
@@ -673,6 +679,7 @@ function! s:init_diff_buffer(state, side) abort
   call s:map_keys('commit_editor', ':<C-u>call ' . s:sid . 'commit_with_editor()<CR>')
   call s:map_keys('cycle_next', ':<C-u>call ' . s:sid . 'cycle_pane(1)<CR>')
   call s:map_keys('cycle_prev', ':<C-u>call ' . s:sid . 'cycle_pane(-1)<CR>')
+  call s:map_open_main()
   call s:map_quit()
 endfunction
 
@@ -693,6 +700,7 @@ function! s:init_branch_buffer(state) abort
   call s:map_keys('cycle_prev', ':<C-u>call ' . s:sid . 'cycle_pane(-1)<CR>')
   call s:map_left_pane_keys()
   call s:map_left_action_keys()
+  call s:map_open_main()
   call s:map_keys('branch_delete', ':<C-u>call ' . s:sid . 'delete_branch()<CR>')
   call s:map_keys('copy_branch', ':<C-u>call ' . s:sid . 'copy_branch_name()<CR>')
   call s:map_quit()
@@ -1716,6 +1724,27 @@ function! s:apply_edited_message() abort
   call s:reload_after_reword(info.state, target_sha)
 endfunction
 
+" Prompt for a commit message and commit the index. Returns 1 on success.
+function! s:commit_index(root) abort
+  if !s:has_staged_changes(a:root, [])
+    echomsg 'No staged changes to commit'
+    return 0
+  endif
+
+  let message = trim(s:prompt_input('Commit message: '))
+  if empty(message)
+    echomsg 'Commit cancelled'
+    return 0
+  endif
+
+  if !s:git_do(a:root, 'commit -m ' . shellescape(message))
+    return 0
+  endif
+
+  echomsg 'Committed: ' . message
+  return 1
+endfunction
+
 function! s:commit_current() abort
   let state = s:cur_state()
   if empty(state)
@@ -1723,22 +1752,9 @@ function! s:commit_current() abort
   endif
   call s:flush_pending(state)
 
-  if !s:has_staged_changes(state.root, [])
-    echomsg 'No staged changes to commit'
+  if !s:commit_index(state.root)
     return
   endif
-
-  let message = trim(s:prompt_input('Commit message: '))
-  if empty(message)
-    echomsg 'Commit cancelled'
-    return
-  endif
-
-  if !s:git_do(state.root, 'commit -m ' . shellescape(message))
-    return
-  endif
-
-  echomsg 'Committed: ' . message
   call s:reload_current_branch(state)
 endfunction
 
@@ -1786,7 +1802,12 @@ function! s:commit_with_editor() abort
   endif
   call s:flush_pending(state)
 
-  if !s:has_staged_changes(state.root, [])
+  call s:open_commit_editor(state.root,
+        \ function('s:reload_current_branch', [state]))
+endfunction
+
+function! s:open_commit_editor(root, on_done) abort
+  if !s:has_staged_changes(a:root, [])
     echomsg 'No staged changes to commit'
     return
   endif
@@ -1799,11 +1820,11 @@ function! s:commit_with_editor() abort
   setlocal noswapfile
   setlocal nobuflisted
   setlocal filetype=gitcommit
-  call setline(1, s:commit_template(state))
+  call setline(1, s:commit_template({'root': a:root}))
   setlocal nomodified
   nnoremap <buffer> <silent> q :<C-u>quit<CR>
 
-  let b:git_changes_commit = {'state': state}
+  let b:git_changes_commit = {'root': a:root, 'on_done': a:on_done}
   augroup git_changes_commit_message
     autocmd! * <buffer>
     execute 'autocmd BufWriteCmd <buffer> call '
@@ -1835,7 +1856,7 @@ function! s:apply_commit_message() abort
   let msgfile = tempname()
   call writefile(message, msgfile)
   try
-    let ok = s:git_do(info.state.root,
+    let ok = s:git_do(info.root,
           \ 'commit --cleanup=strip -F ' . shellescape(msgfile))
   finally
     call delete(msgfile)
@@ -1846,7 +1867,7 @@ function! s:apply_commit_message() abort
 
   setlocal nomodified
   echomsg 'Committed'
-  call s:reload_current_branch(info.state)
+  call call(info.on_done, [])
 endfunction
 
 function! s:reload_current_branch(state) abort
@@ -4211,6 +4232,9 @@ function! s:init_file_diff_buffer(state, side) abort
   call s:map_keys('unstage', ':<C-u>call ' . s:sid . 'stage_file_diff("unstage")<CR>')
   call s:map_keys('staged_view', ':<C-u>call ' . s:sid . 'toggle_staged_file_diff()<CR>')
   call s:map_keys('file_discard_diff', ':<C-u>call ' . s:sid . 'discard_file_diff()<CR>')
+  call s:map_keys('commit', ':<C-u>call ' . s:sid . 'commit_file_diff()<CR>')
+  call s:map_keys('commit_editor', ':<C-u>call ' . s:sid . 'commit_file_diff_editor()<CR>')
+  call s:map_open_main()
   call s:map_keys('cycle_next', ':<C-u>call ' . s:sid . 'cycle_file_diff(1)<CR>')
   call s:map_keys('cycle_prev', ':<C-u>call ' . s:sid . 'cycle_file_diff(-1)<CR>')
 endfunction
@@ -4514,6 +4538,34 @@ function! s:stage_file_diff(mode) abort
   endif
 
   call s:refresh_file_diff()
+endfunction
+
+function! s:commit_file_diff() abort
+  let state = get(b:, 'git_changes_file_diff', {})
+  if empty(state) || !s:file_diff_alive(state)
+    return
+  endif
+
+  if !s:commit_index(state.root)
+    return
+  endif
+  call s:refresh_file_diff()
+endfunction
+
+function! s:commit_file_diff_editor() abort
+  let state = get(b:, 'git_changes_file_diff', {})
+  if empty(state) || !s:file_diff_alive(state)
+    return
+  endif
+
+  call s:open_commit_editor(state.root,
+        \ function('s:refresh_file_diff_state', [state]))
+endfunction
+
+function! s:refresh_file_diff_state(state) abort
+  if s:file_diff_alive(a:state)
+    call s:start_sxs_fetch(a:state)
+  endif
 endfunction
 
 function! s:toggle_staged_file_diff() abort
