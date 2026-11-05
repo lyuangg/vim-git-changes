@@ -64,17 +64,11 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 :GitChanges v1.0 v2.0
 ```
 
-`GitChanges` 和 `GitChangesDiff` 会复用当前仓库已经打开的 tab，不会每次新建
-tab；用 `o` 打开文件时，如果该文件已在普通窗口中打开，会直接跳过去。
-
 文件列表中的帮助默认隐藏，按 `?` 显示，再按 `?` 隐藏。
 
 主 GitChanges 窗口和单文件 diff 窗口默认都会折叠未改动区域。按 `zR`
 展开完整文件，用 `zo` / `zc` 折叠或展开当前块，或设置
 `g:git_changes_fold = 0` 关闭折叠。
-
-终端窗口大小变化时，布局会按配置的面板尺寸重新计算；缩小后再恢复，
-各面板会回到原来的比例，不会出现某个窗口被拉大、其他窗口被挤小的情况。
 
 ### 单文件 diff
 
