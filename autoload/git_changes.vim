@@ -4959,3 +4959,217 @@ function! git_changes#complete_diff(arglead, cmdline, cursorpos) abort
   endfor
   return result
 endfunction
+
+
+" ============================================================================
+" GitChangesBlame
+"
+" A read-only pane on the left of the current file with one blame line per
+" file line. Both windows scroll and move together; q closes the pane.
+" ============================================================================
+
+function! s:blame_text(sha, author, date) abort
+  let author = a:sha =~# '^0\+$' ? 'Uncommitted' : a:author
+  return strpart(a:sha, 0, 8) . ' ' . s:truncate(author, 12)
+        \ . ' ' . a:date
+endfunction
+
+" Parse `git blame --line-porcelain` into one display line per file line.
+function! s:parse_blame(out) abort
+  let lines = []
+  let meta = {}
+  let i = 0
+  let total = len(a:out)
+
+  while i < total
+    let line = a:out[i]
+    if line !~# '^[0-9a-f]\{40\} '
+      let i += 1
+      continue
+    endif
+
+    let sha = strpart(line, 0, 40)
+    let author = ''
+    let date = ''
+    let i += 1
+    while i < total && a:out[i][0] !=# "\t"
+      let field = a:out[i]
+      if field =~# '^author '
+        let author = strpart(field, 7)
+      elseif field =~# '^author-time '
+        let date = strftime('%Y-%m-%d', str2nr(strpart(field, 12)))
+      endif
+      let i += 1
+    endwhile
+
+    if !empty(author)
+      let meta[sha] = [author, date]
+    elseif has_key(meta, sha)
+      let [author, date] = meta[sha]
+    endif
+
+    " Skip the content line that terminates the record.
+    if i < total && a:out[i][0] ==# "\t"
+      let i += 1
+    endif
+    call add(lines, s:blame_text(sha, author, date))
+  endwhile
+
+  return lines
+endfunction
+
+function! s:blame_lines(root, path, modified) abort
+  let contents = ''
+  if a:modified
+    let contents = tempname()
+    call writefile(getline(1, '$'), contents)
+  endif
+
+  try
+    let cmd = 'git --no-pager -c core.quotePath=false -C '
+          \ . shellescape(a:root) . ' blame --line-porcelain'
+    if !empty(contents)
+      let cmd .= ' --contents ' . shellescape(contents)
+    endif
+    let cmd .= ' -- ' . shellescape(a:path)
+    let out = systemlist(cmd)
+    if v:shell_error
+      call s:err('git blame failed: ' . s:output_message(out))
+      return []
+    endif
+    return s:parse_blame(out)
+  finally
+    if !empty(contents)
+      call delete(contents)
+    endif
+  endtry
+endfunction
+
+function! s:blame_cleanup() abort
+  let info = get(b:, 'git_changes_blame', {})
+  if empty(info)
+    return
+  endif
+
+  let file_win = get(info, 'file_win', 0)
+  if s:win_exists(file_win)
+    call win_execute(file_win,
+          \ 'setlocal noscrollbind nocursorbind '
+          \ . (get(info, 'file_wrap', 1) ? 'wrap' : 'nowrap'))
+  endif
+
+  let file_buf = get(info, 'file_buf', -1)
+  if bufexists(file_buf)
+    call setbufvar(file_buf, 'git_changes_blame', {})
+  endif
+  silent! unlet! b:git_changes_blame
+endfunction
+
+function! s:blame_close() abort
+  let info = get(b:, 'git_changes_blame', {})
+  if empty(info)
+    return
+  endif
+  call s:blame_cleanup()
+
+  let win = get(info, 'win', 0)
+  if s:win_exists(win)
+    if win == win_getid()
+      close
+    else
+      call win_execute(win, 'close')
+    endif
+  endif
+
+  let buf = get(info, 'buf', -1)
+  if bufexists(buf)
+    execute 'silent! bwipeout! ' . buf
+  endif
+endfunction
+
+function! git_changes#blame() abort
+  let root = s:repo_root()
+  if empty(root)
+    call s:err('not inside a Git repository')
+    return
+  endif
+  if &buftype !=# ''
+    call s:err('GitChangesBlame: open a file first')
+    return
+  endif
+
+  let path = s:current_repo_path(root)
+  if empty(path)
+    call s:err('GitChangesBlame: the current file is not in this repository')
+    return
+  endif
+  if !filereadable(root . '/' . path)
+    call s:err('GitChangesBlame: file does not exist: ' . path)
+    return
+  endif
+
+  " Re-running the command replaces the existing blame pane.
+  if !empty(get(b:, 'git_changes_blame', {}))
+    call s:blame_close()
+  endif
+
+  let file_win = win_getid()
+  let file_buf = bufnr('%')
+  let cur_line = line('.')
+  let view = winsaveview()
+  let modified = &modified
+  let file_wrap = &wrap
+
+  let blame_lines = s:blame_lines(root, path, modified)
+  if v:shell_error
+    return
+  endif
+
+  " Keep the pane aligned even for empty files.
+  let target = line('$')
+  while len(blame_lines) < target
+    call add(blame_lines, '')
+  endwhile
+  if len(blame_lines) > target
+    call remove(blame_lines, target, -1)
+  endif
+
+  leftabove vertical split
+  let blame_win = win_getid()
+  let blame_buf = s:new_scratch(
+        \ printf('[GitChangesBlame %d] %s', file_buf, path), '')
+  call s:set_lines(blame_buf, blame_lines)
+
+  setlocal scrollbind cursorbind
+  setlocal nonumber norelativenumber nolist nowrap
+  setlocal signcolumn=no foldcolumn=0 nospell nomodeline
+  setlocal nomodifiable
+  execute 'vertical resize ' . s:opt_int('git_changes_blame_width', 36)
+  execute 'nnoremap <buffer> <silent> q :<C-u>call '
+        \ . s:sid . 'blame_close()<CR>'
+
+  let info = {
+        \ 'win': blame_win,
+        \ 'buf': blame_buf,
+        \ 'file_win': file_win,
+        \ 'file_buf': file_buf,
+        \ 'file_wrap': file_wrap,
+        \ 'root': root,
+        \ 'path': path,
+        \ }
+  let b:git_changes_blame = info
+  call setbufvar(file_buf, 'git_changes_blame', info)
+
+  augroup git_changes_blame
+    autocmd! * <buffer>
+    execute 'autocmd BufWipeout <buffer> call '
+          \ . s:sid . 'blame_cleanup()'
+  augroup END
+
+  call win_execute(file_win, 'setlocal scrollbind cursorbind nowrap')
+  call s:set_cursor(blame_win, cur_line)
+  call win_gotoid(file_win)
+  call winrestview(view)
+  call win_gotoid(blame_win)
+endfunction
+

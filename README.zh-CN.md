@@ -32,6 +32,7 @@ return {
       "GitChangesCommit",
       "GitChangesPull",
       "GitChangesPush",
+      "GitChangesBlame",
     },
   },
 }
@@ -90,6 +91,16 @@ GitChanges 窗口，执行后也会同步刷新。
 :GitChangesPull
 :GitChangesPush
 ```
+
+### Blame
+
+```vim
+" 在当前文件左侧打开 git blame 窗口
+:GitChangesBlame
+```
+
+blame 窗口会与文件同步滚动、同步光标；在 blame 窗口中按 `q` 关闭。
+窗口宽度用 `g:git_changes_blame_width` 配置（默认 36）。
 
 ### 单文件 diff
 
@@ -196,6 +207,9 @@ let g:git_changes_fold = 1
 
 " 左侧栏宽度
 let g:git_changes_width = 40
+
+" blame 窗口宽度
+let g:git_changes_blame_width = 36
 
 " commit 列表高度上限
 let g:git_changes_commits_height = 12

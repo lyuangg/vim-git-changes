@@ -32,6 +32,7 @@ return {
       "GitChangesCommit",
       "GitChangesPull",
       "GitChangesPush",
+      "GitChangesBlame",
     },
   },
 }
@@ -90,6 +91,16 @@ tab is open for the repository, it is refreshed as well.
 :GitChangesPull
 :GitChangesPush
 ```
+
+### Blame
+
+```vim
+" Show git blame for the current file in a window on the left
+:GitChangesBlame
+```
+
+The blame pane scrolls and moves together with the file. Press `q` in the pane
+to close it. Set `g:git_changes_blame_width` to change its width (default 36).
 
 ### File diff
 
@@ -210,6 +221,9 @@ let g:git_changes_fold = 1
 
 " Left pane width
 let g:git_changes_width = 40
+
+" Blame pane width
+let g:git_changes_blame_width = 36
 
 " Commit list height limit
 let g:git_changes_commits_height = 12

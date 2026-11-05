@@ -11,3 +11,4 @@ command! -nargs=? -complete=customlist,git_changes#complete_commit GitChangesCom
       \ call git_changes#commit(<q-args>)
 command! -bar GitChangesPull call git_changes#pull()
 command! -bar GitChangesPush call git_changes#push()
+command! -bar GitChangesBlame call git_changes#blame()
