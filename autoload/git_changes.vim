@@ -1215,7 +1215,18 @@ function! s:open_file() abort
     return
   endif
 
+  " The side buffers contain the full file, so the cursor line maps directly
+  " to a line in the file. Only do this from the diff panes.
+  let lnum = 0
+  if get(b:, 'gc_kind', '') ==# 'diff'
+    let lnum = line('.')
+  endif
+
   execute 'tabnew ' . fnameescape(path)
+  if lnum > 0
+    call cursor(lnum, 1)
+    normal! zz
+  endif
 endfunction
 
 function! s:copy_file_path() abort

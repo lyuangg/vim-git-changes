@@ -80,7 +80,7 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 | `U` | unstage 所有已暂存改动 |
 | `-` | stage 或 unstage 文件 |
 | `d` | 丢弃未暂存改动，或删除未跟踪文件 |
-| `o` | 在新标签页打开当前文件（diff 窗口也可用） |
+| `o` | 在新标签页打开当前文件 |
 | `yy` | 复制文件绝对路径 |
 | `cc` | commit 已暂存内容 |
 | `C` | 使用编辑器提交已暂存内容（显示分支和暂存状态） |
