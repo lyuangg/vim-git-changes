@@ -74,6 +74,10 @@ Diff panes fold unchanged blocks by default, both in the main browser and in
 the file diff views. Press `zR` to show the full files, use `zo` / `zc` to
 toggle one fold, or set `g:git_changes_fold = 0` to keep everything expanded.
 
+When the terminal is resized, the layout is recalculated from the configured
+pane sizes, so shrinking and restoring the window returns to the original
+proportions instead of leaving one pane stretched.
+
 ### File diff
 
 ```vim

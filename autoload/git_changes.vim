@@ -3798,26 +3798,7 @@ function! s:open_tab(root, parsed, tabnr) abort
     execute 'silent! bwipeout ' . initial_buf
   endif
 
-  let width = s:opt_int('git_changes_width', 40)
-  let total_left = max([12, &lines - 4])
-  let branch_height = max([6, min([
-        \ s:opt_int('git_changes_branches_height', 8), total_left / 4])])
-  let commit_height = max([5, min([
-        \ s:opt_int('git_changes_commits_height', 12), total_left / 3])])
-  if total_left - branch_height - commit_height < 4
-    let commit_height = max([4, total_left - branch_height - 4])
-  endif
-
-  call win_gotoid(state.files_win)
-  silent! execute 'vertical resize ' . width
-  let side_total = winwidth(state.old_win) + winwidth(state.new_win) + 1
-  let side_width = max([20, side_total / 2])
-  call win_gotoid(state.old_win)
-  silent! execute 'vertical resize ' . side_width
-  call win_gotoid(state.commits_win)
-  silent! execute 'resize ' . commit_height
-  call win_gotoid(state.branches_win)
-  silent! execute 'resize ' . branch_height
+  call s:apply_layout(state)
 
   call s:load_branches(state, '')
   call s:load_commits(state, 'initial',
@@ -3826,6 +3807,80 @@ function! s:open_tab(root, parsed, tabnr) abort
   let state.updating = 0
   call win_gotoid(state.files_win)
 endfunction
+
+" Heights for the commit and branch panes, derived from the current screen
+" size so the layout adapts when the terminal is resized.
+function! s:layout_heights() abort
+  let total_left = max([12, &lines - 4])
+  let branch_height = max([6, min([
+        \ s:opt_int('git_changes_branches_height', 8), total_left / 4])])
+  let commit_height = max([5, min([
+        \ s:opt_int('git_changes_commits_height', 12), total_left / 3])])
+  if total_left - branch_height - commit_height < 4
+    let commit_height = max([4, total_left - branch_height - 4])
+  endif
+  return [commit_height, branch_height]
+endfunction
+
+" Apply the configured proportions to a GitChanges layout. Called on creation
+" and again on VimResized, so shrinking and restoring the terminal does not
+" leave one pane stretched and the others squeezed.
+function! s:apply_layout(state) abort
+  if !s:win_exists(a:state.files_win)
+        \ || !s:win_exists(a:state.commits_win)
+        \ || !s:win_exists(a:state.branches_win)
+        \ || !s:win_exists(a:state.old_win)
+        \ || !s:win_exists(a:state.new_win)
+    return
+  endif
+
+  let width = s:opt_int('git_changes_width', 40)
+  let [commit_height, branch_height] = s:layout_heights()
+
+  " `:resize` gives or takes lines from the window below (or above for the
+  " bottom window), so set the bottom pane first and let the files pane absorb
+  " the rest. Resizing commits directly would move space into branches.
+  let total_height = getwininfo(a:state.files_win)[0].height
+        \ + getwininfo(a:state.commits_win)[0].height
+        \ + getwininfo(a:state.branches_win)[0].height
+  let files_height = max([1, total_height - commit_height - branch_height])
+
+  call win_execute(a:state.files_win,
+        \ 'silent! vertical resize ' . width)
+  let side_total = winwidth(a:state.old_win) + winwidth(a:state.new_win) + 1
+  let side_width = max([20, side_total / 2])
+  call win_execute(a:state.old_win,
+        \ 'silent! vertical resize ' . side_width)
+  call win_execute(a:state.branches_win, 'silent! resize ' . branch_height)
+  call win_execute(a:state.files_win, 'silent! resize ' . files_height)
+endfunction
+
+function! s:apply_file_diff_layout(state) abort
+  if !s:file_diff_alive(a:state)
+    return
+  endif
+  let total = winwidth(a:state.old_win) + winwidth(a:state.new_win) + 1
+  let half = max([20, total / 2])
+  call win_execute(a:state.old_win, 'silent! vertical resize ' . half)
+endfunction
+
+function! s:on_vim_resized() abort
+  for state in copy(s:instances)
+    if s:state_alive(state)
+      call s:apply_layout(state)
+    endif
+  endfor
+  for state in copy(s:file_diff_instances)
+    if s:file_diff_alive(state)
+      call s:apply_file_diff_layout(state)
+    endif
+  endfor
+endfunction
+
+augroup git_changes_resize
+  autocmd!
+  execute 'autocmd VimResized * call ' . s:sid . 'on_vim_resized()'
+augroup END
 
 function! s:after_initial_commits(state) abort
   if !s:state_alive(a:state)
