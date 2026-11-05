@@ -25,7 +25,11 @@ Add a plugin spec, for example in `lua/plugins/vim-git-changes.lua`:
 return {
   {
     "lyuangg/vim-git-changes",
-    cmd = { "GitChanges", "GitChangesQuit" },
+    cmd = {
+      "GitChanges",
+      "GitChangesQuit",
+      "GitChangesDiff",
+    },
   },
 }
 ```
@@ -61,6 +65,51 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 ```
 
 Help is hidden by default in the file list. Press `?` to show it and `?` again to hide it.
+
+Diff panes fold unchanged blocks by default, both in the main browser and in
+the file diff views. Press `zR` to show the full files, use `zo` / `zc` to
+toggle one fold, or set `g:git_changes_fold = 0` to keep everything expanded.
+
+### File diff
+
+```vim
+" Current file: index vs working tree (plain git diff)
+:GitChangesDiff
+
+" One ref vs working tree
+:GitChangesDiff HEAD~3
+
+" Two refs
+:GitChangesDiff main HEAD
+
+" Staged changes (HEAD vs index); --staged and --cached are synonyms
+:GitChangesDiff --staged
+:GitChangesDiff --cached
+
+" Ignore all whitespace changes / changes in whitespace amount
+:GitChangesDiff -w
+:GitChangesDiff -b
+
+" Another file: an optional path after --
+:GitChangesDiff -- src/main.c
+
+" Paths with spaces: use single quotes or a backslash
+:GitChangesDiff -- 'src/my file.c'
+:GitChangesDiff -- src/my\ file.c
+```
+
+| Key | Action |
+| --- | --- |
+| `q` | Close the diff tab |
+| `r` | Re-read both sides |
+| `s` | Stage the current file |
+| `u` | Unstage the current file |
+| `D` | Discard unstaged changes for the file |
+| `dS` | Toggle staged comparison (`git diff --staged`) |
+| `Tab` / `S-Tab` | Switch between the two windows |
+| `]c` / `[c` | Jump to the next / previous hunk |
+| `zo` / `zc` | Open / close a fold |
+| `zR` / `zM` | Open / close all folds |
 
 ### File list
 
@@ -130,6 +179,9 @@ configured, push fails with `Cannot push: no remote configured`.
 ## Configuration
 
 ```vim
+" Fold unchanged blocks in diff panes (0 = show full files)
+let g:git_changes_fold = 1
+
 " Left pane width
 let g:git_changes_width = 40
 
@@ -208,6 +260,8 @@ let g:git_changes_keymaps = {
 | `unstage_all` | `U` |
 | `toggle_stage` | `-` |
 | `file_discard` | `d` |
+| `file_discard_diff` | `D` |
+| `staged_view` | `dS` |
 | `open_file` | `o` |
 | `scroll_half_down` | `<C-d>` |
 | `scroll_half_up` | `<C-u>` |

@@ -375,11 +375,13 @@ function! s:cur_state() abort
 endfunction
 
 function! s:state_alive(state) abort
-  return bufexists(a:state.files_buf)
-        \ || bufexists(a:state.commits_buf)
-        \ || bufexists(a:state.old_buf)
-        \ || bufexists(a:state.new_buf)
-        \ || bufexists(a:state.branches_buf)
+  for key in ['files_buf', 'commits_buf', 'old_buf', 'new_buf', 'branches_buf']
+    let buf = get(a:state, key, 0)
+    if type(buf) == type(0) && buf > 0 && bufexists(buf)
+      return 1
+    endif
+  endfor
+  return 0
 endfunction
 
 function! s:find_state() abort
@@ -482,6 +484,10 @@ function! s:setup_list_window() abort
   setlocal winminwidth=20
 endfunction
 
+function! s:fold_level() abort
+  return get(g:, 'git_changes_fold', 1) ? 0 : 99
+endfunction
+
 function! s:setup_diff_window() abort
   setlocal cursorline
   setlocal scrolloff=0
@@ -493,7 +499,7 @@ function! s:setup_diff_window() abort
   setlocal cursorbind
   setlocal foldenable
   setlocal foldmethod=diff
-  setlocal foldlevel=99
+  execute 'setlocal foldlevel=' . s:fold_level()
   setlocal winminwidth=20
 endfunction
 
@@ -508,6 +514,8 @@ function! s:default_keymaps() abort
         \ 'unstage_all': 'U',
         \ 'toggle_stage': '-',
         \ 'file_discard': 'd',
+        \ 'file_discard_diff': 'D',
+        \ 'staged_view': 'dS',
         \ 'open_file': 'o',
         \ 'scroll_half_down': '<C-d>',
         \ 'scroll_half_up': '<C-u>',
@@ -656,6 +664,8 @@ function! s:init_diff_buffer(state, side) abort
   call s:map_keys('stage_all', ':<C-u>call ' . s:sid . 'stage_all()<CR>')
   call s:map_keys('unstage_all', ':<C-u>call ' . s:sid . 'unstage_all()<CR>')
   call s:map_keys('toggle_stage', ':<C-u>call ' . s:sid . 'stage_current("toggle")<CR>')
+  call s:map_keys('staged_view', ':<C-u>call ' . s:sid . 'toggle_main_staged_diff()<CR>')
+  call s:map_keys('file_discard_diff', ':<C-u>call ' . s:sid . 'discard_current()<CR>')
   call s:map_keys('commit', ':<C-u>call ' . s:sid . 'commit_current()<CR>')
   call s:map_keys('pull', ':<C-u>call ' . s:sid . 'pull_current()<CR>')
   call s:map_keys('push', ':<C-u>call ' . s:sid . 'push_current()<CR>')
@@ -1076,7 +1086,7 @@ function! s:git_run(root, args) abort
   let cmd = 'git --no-pager -c core.quotePath=false -c credential.interactive=never -C '
         \ . shellescape(a:root) . ' ' . a:args . ' 2>&1'
   let out = systemlist(cmd)
-  return {'ok': v:shell_error == 0, 'out': out}
+  return {'ok': v:shell_error == 0, 'out': out, 'code': v:shell_error}
 endfunction
 
 function! s:git_do(root, args) abort
@@ -1277,7 +1287,7 @@ function! s:discard_current() abort
 
   if xy ==# '??'
     if get(g:, 'git_changes_confirm_discard', 1)
-          \ && confirm('Delete untracked file ' . file.path . '?',
+          \ && s:prompt_confirm('Delete untracked file ' . file.path . '?',
           \             "&Yes\n&No", 2) != 1
       return
     endif
@@ -1294,7 +1304,7 @@ function! s:discard_current() abort
     endif
 
     if get(g:, 'git_changes_confirm_discard', 1)
-          \ && confirm('Discard unstaged changes for ' . file.path . '?',
+          \ && s:prompt_confirm('Discard unstaged changes for ' . file.path . '?',
           \             "&Yes\n&No", 2) != 1
       return
     endif
@@ -3062,7 +3072,8 @@ function! s:set_side_filetype(state, side, path) abort
   call win_execute(winid, 'silent! filetype detect')
 
   call win_execute(winid, 'setlocal nowrap number numberwidth=4 cursorline '
-        \ . 'scrollbind cursorbind foldenable foldmethod=diff foldlevel=99')
+        \ . 'scrollbind cursorbind foldenable foldmethod=diff foldlevel='
+        \ . s:fold_level())
 endfunction
 
 function! s:load_side_buffer(state, side, path, lines, detect_filetype, label) abort
@@ -3087,7 +3098,8 @@ function! s:load_side_buffer(state, side, path, lines, detect_filetype, label) a
   endif
 
   call win_execute(winid, 'setlocal nowrap number numberwidth=4 cursorline '
-        \ . 'scrollbind cursorbind foldenable foldmethod=diff foldlevel=99')
+        \ . 'scrollbind cursorbind foldenable foldmethod=diff foldlevel='
+        \ . s:fold_level())
   call s:init_statusline_highlights()
   let label = substitute(a:label, '%', '%%', 'g')
   call win_execute(winid, 'let &l:statusline = ' . string(
@@ -3125,7 +3137,7 @@ function! s:diff_on(state) abort
   for winid in [a:state.old_win, a:state.new_win]
     if s:win_exists(winid)
       call win_execute(winid,
-            \ 'setlocal foldenable foldmethod=diff foldlevel=99')
+            \ 'setlocal foldenable foldmethod=diff foldlevel=' . s:fold_level())
     endif
   endfor
 endfunction
@@ -3193,12 +3205,38 @@ function! s:worktree_file_is_binary(root, path) abort
   return 0
 endfunction
 
+function! s:toggle_main_staged_diff() abort
+  let state = s:cur_state()
+  if empty(state) || empty(state.commits) || state.commit_index < 0
+    return
+  endif
+
+  let entry = state.commits[state.commit_index]
+  if entry.kind !=# 'worktree'
+    call s:err('staged view is only available for working tree changes')
+    return
+  endif
+
+  let index = s:current_file_index(state)
+  if index < 0
+    let index = state.file_index
+  endif
+  if index < 0 || index >= len(state.files)
+    call s:err('select a file first')
+    return
+  endif
+
+  let state.diff_cached = !get(state, 'diff_cached', 0)
+  call s:show_diff(state, state.files[index], entry)
+endfunction
+
 function! s:show_diff(state, file, ...) abort
   if a:state.commit_index < 0 || a:state.commit_index >= len(a:state.commits)
     return
   endif
   let entry = a:0 ? a:1 : a:state.commits[a:state.commit_index]
   let [old_path, new_path, paths] = s:file_paths(a:file)
+  let cached = entry.kind ==# 'worktree' && get(a:state, 'diff_cached', 0)
 
   let token = get(a:state, 'diff_req', 0) + 1
   let a:state.diff_req = token
@@ -3210,6 +3248,7 @@ function! s:show_diff(state, file, ...) abort
         \ 'entry': entry,
         \ 'old_path': old_path,
         \ 'new_path': new_path,
+        \ 'cached': cached,
         \ 'old': [],
         \ 'new': [],
         \ 'pending': 0,
@@ -3217,9 +3256,25 @@ function! s:show_diff(state, file, ...) abort
         \ }
 
   if entry.kind ==# 'worktree'
-    let ctx.old_label = 'HEAD ' . old_path
-    let ctx.new_label = 'WORKTREE ' . new_path
-    let args = ['diff', '--numstat', 'HEAD', '--'] + paths
+    if cached
+      if get(a:file, 'status_text', '') ==# '??'
+        call s:show_side_message(a:state,
+              \ ['(untracked file - not in the index)'])
+        let a:state.shown_file = a:file
+        return
+      endif
+      let ctx.old_label = 'HEAD ' . old_path
+      let ctx.new_label = 'INDEX ' . new_path
+      let args = ['diff', '--numstat', '--cached']
+      if get(a:state, 'has_head', 0)
+        call add(args, 'HEAD')
+      endif
+      let args = args + ['--'] + paths
+    else
+      let ctx.old_label = 'INDEX ' . old_path
+      let ctx.new_label = 'WORKTREE ' . new_path
+      let args = ['diff', '--numstat', '--'] + paths
+    endif
   elseif entry.kind ==# 'compare'
     let ctx.old_label = entry.old_label . ' ' . old_path
     let ctx.new_label = entry.new_label . ' ' . new_path
@@ -3252,6 +3307,7 @@ function! s:on_diff_check(state, ctx, result) abort
   endfor
 
   if a:ctx.entry.kind ==# 'worktree'
+        \ && !get(a:ctx, 'cached', 0)
         \ && a:ctx.file.status !=# 'D'
         \ && s:worktree_file_is_binary(a:state.root, a:ctx.new_path)
     call s:show_side_message(a:state,
@@ -3259,16 +3315,20 @@ function! s:on_diff_check(state, ctx, result) abort
     return
   endif
 
-  if a:ctx.entry.kind ==# 'worktree'
-    " The working tree file is local, read it directly.
+  if a:ctx.entry.kind ==# 'worktree' && !get(a:ctx, 'cached', 0)
+    " The working tree file is local, read it directly.  The old side is the
+    " index, so the default view is plain "git diff".
     let a:ctx.new = s:read_worktree(a:state.root, a:ctx.new_path)
     call s:git_job(a:state, 'diff-old', 'diff_req', a:ctx.token,
-          \ ['show', 'HEAD:' . a:ctx.old_path],
+          \ ['show', ':' . a:ctx.old_path],
           \ function('s:on_diff_old', [a:state, a:ctx]))
     return
   endif
 
-  if a:ctx.entry.kind ==# 'compare'
+  if a:ctx.entry.kind ==# 'worktree'
+    let old_args = ['show', 'HEAD:' . a:ctx.old_path]
+    let new_args = ['show', ':' . a:ctx.new_path]
+  elseif a:ctx.entry.kind ==# 'compare'
     let old_args = ['show', a:ctx.entry.old_ref . ':' . a:ctx.old_path]
     let new_args = ['show', a:ctx.entry.new_ref . ':' . a:ctx.new_path]
   else
@@ -3539,6 +3599,7 @@ function! s:open_tab(root, parsed, tabnr) abort
         \ 'log_range': log_range,
         \ 'start_entries': start_entries,
         \ 'has_head': has_head,
+        \ 'diff_cached': 0,
         \ 'log_ref': '',
         \ 'show_help': 0,
         \ 'branch_show_help': 0,
@@ -3709,4 +3770,874 @@ function! git_changes#quit() abort
     return
   endif
   call s:quit_state(state)
+endfunction
+
+
+" ============================================================================
+" GitChangesDiff
+"
+" A focused two-window file diff.  It reuses the side-by-side machinery from
+" the main browser but keeps its own state and never touches an open
+" GitChanges tab.
+" ============================================================================
+
+let s:file_diff_next_id = 0
+let s:file_diff_instances = []
+let s:file_diff_active = {}
+
+function! git_changes#diff_open(raw) abort
+  call s:diff_open(a:raw, {'cmd': 'GitChangesDiff'})
+endfunction
+
+function! s:diff_usage(defaults) abort
+  call s:err('usage: :' . get(a:defaults, 'cmd', 'GitChangesDiff')
+        \ . ' [ref1] [ref2] [--staged|--cached] [-w|-b] [-- path]')
+endfunction
+
+" Shell-like splitting so quoted paths and escaped spaces survive.
+function! s:split_args(raw) abort
+  let tokens = []
+  let token = ''
+  let quote = ''
+  let escaped = 0
+
+  for i in range(strlen(a:raw))
+    let ch = a:raw[i]
+    if escaped
+      let token .= ch
+      let escaped = 0
+    elseif ch ==# "\\"
+      let escaped = 1
+    elseif !empty(quote)
+      if ch ==# quote
+        let quote = ''
+      else
+        let token .= ch
+      endif
+    elseif ch ==# '"' || ch ==# "'"
+      let quote = ch
+    elseif ch ==# ' ' || ch ==# "\t"
+      if !empty(token)
+        call add(tokens, token)
+        let token = ''
+      endif
+    else
+      let token .= ch
+    endif
+  endfor
+
+  if escaped
+    let token .= "\\"
+  endif
+  if !empty(token)
+    call add(tokens, token)
+  endif
+  return tokens
+endfunction
+
+function! s:current_repo_path(root) abort
+  " Running :GitChangesDiff from one of our diff windows keeps the same file.
+  let file_diff = get(t:, 'git_changes_file_diff', {})
+  if !empty(file_diff)
+    let buf = bufnr('%')
+    if (buf == get(file_diff, 'old_buf', -1)
+          \ || buf == get(file_diff, 'new_buf', -1))
+          \ && get(file_diff, 'root', '') ==# a:root
+      return get(get(file_diff, 'spec', {}), 'path', '')
+    endif
+  endif
+
+  if &buftype !=# ''
+    return ''
+  endif
+  let name = expand('%:p')
+  if empty(name)
+    return ''
+  endif
+  return s:repo_relative_path(a:root, name)
+endfunction
+
+function! s:repo_relative_path(root, path) abort
+  if empty(a:path)
+    return ''
+  endif
+
+  if a:path =~# '^/'
+    let abs = simplify(a:path)
+  else
+    let abs = simplify(fnamemodify(a:path, ':p'))
+  endif
+
+  let root = simplify(fnamemodify(a:root, ':p'))
+  while len(root) > 1 && root[-1:] ==# '/'
+    let root = root[:-2]
+  endwhile
+
+  let relative = s:path_relative_to(abs, root)
+  if !empty(relative)
+    return relative
+  endif
+
+  " /var and /private/var (and similar symlinked roots) should still match.
+  let abs = simplify(resolve(abs))
+  let root = simplify(resolve(root))
+  while len(root) > 1 && root[-1:] ==# '/'
+    let root = root[:-2]
+  endwhile
+  return s:path_relative_to(abs, root)
+endfunction
+
+function! s:path_relative_to(path, root) abort
+  if a:path ==# a:root
+    return ''
+  endif
+  let prefix = a:root . '/'
+  if stridx(a:path, prefix) == 0
+    return strpart(a:path, len(prefix))
+  endif
+  return ''
+endfunction
+
+function! s:build_diff_labels(spec) abort
+  let path = a:spec.path
+  let refs = a:spec.refs
+
+  if len(refs) == 2
+    let a:spec.old_expr = refs[0] . ':' . path
+    let a:spec.new_expr = refs[1] . ':' . path
+    let a:spec.old_label = a:spec.revisions[0] . ' ' . path
+    let a:spec.new_label = a:spec.revisions[1] . ' ' . path
+    let a:spec.new_kind = 'ref'
+    return
+  endif
+
+  if a:spec.cached
+    if empty(refs)
+      let base = a:spec.has_head ? 'HEAD' : ''
+      let base_label = a:spec.has_head ? 'HEAD' : '(empty)'
+    else
+      let base = refs[0]
+      let base_label = a:spec.revisions[0]
+    endif
+    let a:spec.old_expr = empty(base) ? '' : base . ':' . path
+    let a:spec.old_label = base_label . ' ' . path
+    let a:spec.new_expr = ':' . path
+    let a:spec.new_label = 'INDEX ' . path
+    let a:spec.new_kind = 'index'
+    return
+  endif
+
+  if empty(refs)
+    " No revision and no --staged: plain "git diff", index vs working tree.
+    let a:spec.old_expr = ':' . path
+    let a:spec.old_label = 'INDEX ' . path
+  else
+    let a:spec.old_expr = refs[0] . ':' . path
+    let a:spec.old_label = a:spec.revisions[0] . ' ' . path
+  endif
+  let a:spec.new_expr = ''
+  let a:spec.new_label = 'WORKTREE ' . path
+  let a:spec.new_kind = 'worktree'
+endfunction
+
+function! s:parse_diff_args(root, current, tokens, defaults) abort
+  let sep = -1
+  for i in range(len(a:tokens))
+    if a:tokens[i] ==# '--'
+      let sep = i
+      break
+    endif
+  endfor
+
+  if sep >= 0
+    let opts = sep == 0 ? [] : a:tokens[0 : sep - 1]
+    let paths = sep >= len(a:tokens) - 1 ? [] : a:tokens[sep + 1 :]
+  else
+    let opts = a:tokens
+    let paths = []
+  endif
+
+  if len(paths) > 1
+    call s:diff_usage(a:defaults)
+    return {}
+  endif
+
+  let raw_path = empty(paths) ? a:current : paths[0]
+  if empty(raw_path)
+    call s:err('current buffer is not a file; specify a path after --')
+    return {}
+  endif
+
+  let path = s:repo_relative_path(a:root, raw_path)
+  if empty(path)
+    call s:err('path is outside the repository: ' . raw_path)
+    return {}
+  endif
+  if isdirectory(a:root . '/' . path)
+    call s:err('path is a directory: ' . path)
+    return {}
+  endif
+
+  let revisions = []
+  let cached = 0
+  let saw_w = 0
+  let saw_b = 0
+
+  for token in opts
+    if token ==# '--staged' || token ==# '--cached'
+      let cached = 1
+    elseif token ==# '-w' || token ==# '--ignore-all-space'
+      let saw_w = 1
+    elseif token ==# '-b' || token ==# '--ignore-space-change'
+      let saw_b = 1
+    else
+      call add(revisions, token)
+    endif
+  endfor
+
+  if len(revisions) > 2 || (cached && len(revisions) > 1)
+    call s:diff_usage(a:defaults)
+    return {}
+  endif
+
+  let ignore = ''
+  if saw_w
+    let ignore = 'iwhiteall'
+  elseif saw_b
+    let ignore = 'iwhite'
+  endif
+
+  let refs = []
+  for rev in revisions
+    let sha = s:resolve_ref(a:root, rev)
+    if empty(sha)
+      call s:err('unknown revision: ' . rev)
+      return {}
+    endif
+    call add(refs, sha)
+  endfor
+
+  let spec = {
+        \ 'path': path,
+        \ 'revisions': revisions,
+        \ 'refs': refs,
+        \ 'has_head': !empty(s:resolve_ref(a:root, 'HEAD')),
+        \ 'cached': cached,
+        \ 'ignore': ignore,
+        \ }
+  call s:build_diff_labels(spec)
+  return spec
+endfunction
+
+function! s:diff_path_known(root, spec) abort
+  if filereadable(a:root . '/' . a:spec.path)
+    return 1
+  endif
+  if s:git_run(a:root, 'ls-files --error-unmatch -- '
+        \ . shellescape(':(literal)' . a:spec.path)).ok
+    return 1
+  endif
+  for expr in [a:spec.old_expr, a:spec.new_expr]
+    if !empty(expr)
+          \ && s:git_run(a:root, 'cat-file -e ' . shellescape(expr)).ok
+      return 1
+    endif
+  endfor
+  " A file that only exists in HEAD has no unstaged diff, but the path is
+  " still valid: open an empty index-vs-worktree view instead of erroring.
+  if a:spec.has_head
+        \ && s:git_run(a:root,
+        \      'cat-file -e ' . shellescape('HEAD:' . a:spec.path)).ok
+    return 1
+  endif
+  return 0
+endfunction
+
+function! s:prompt_confirm(prompt, choices, default) abort
+  if exists('g:git_changes_confirm_override')
+    let value = g:git_changes_confirm_override
+    unlet g:git_changes_confirm_override
+    return type(value) == type(0) ? value : str2nr(value)
+  endif
+  return confirm(a:prompt, a:choices, a:default)
+endfunction
+
+function! s:maybe_save_current(root, spec, current) abort
+  if empty(a:current) || a:spec.path !=# a:current
+    return 1
+  endif
+  if !&modified || &buftype !=# ''
+    return 1
+  endif
+
+  let choice = s:prompt_confirm(
+        \ 'GitChangesDiff: save changes before comparing disk contents?',
+        \ "&Save\n&Skip\n&Cancel", 1)
+  if choice == 2
+    echomsg 'GitChangesDiff: comparing disk contents (unsaved changes skipped)'
+    return 1
+  elseif choice != 1
+    return 0
+  endif
+
+  try
+    silent write
+  catch
+    call s:err('failed to save: ' . v:exception)
+    return 0
+  endtry
+  if &modified
+    call s:err('failed to save the file')
+    return 0
+  endif
+  return 1
+endfunction
+
+function! s:diff_open(raw, defaults) abort
+  let root = s:repo_root()
+  if empty(root)
+    call s:err('not inside a Git repository')
+    return
+  endif
+
+  let current = s:current_repo_path(root)
+  let tokens = s:split_args(a:raw)
+  let spec = s:parse_diff_args(root, current, tokens, a:defaults)
+  if empty(spec)
+    return
+  endif
+
+  if spec.new_kind ==# 'worktree'
+        \ && !s:maybe_save_current(root, spec, current)
+    return
+  endif
+
+  if !s:diff_path_known(root, spec)
+    call s:err('path not found: ' . spec.path)
+    return
+  endif
+
+  call s:open_sxs_diff(root, spec)
+endfunction
+
+function! s:open_sxs_diff(root, spec) abort
+  let id = s:file_diff_next_id + 1
+  let s:file_diff_next_id = id
+
+  tabnew
+  let initial_buf = bufnr('%')
+
+  let state = {
+        \ 'id': id,
+        \ 'root': a:root,
+        \ 'spec': a:spec,
+        \ 'tab': tabpagenr(),
+        \ 'old_buf': -1,
+        \ 'new_buf': -1,
+        \ 'old_win': 0,
+        \ 'new_win': 0,
+        \ 'diff_req': 0,
+        \ 'shown_file': {},
+        \ 'clean': 0,
+        \ }
+  let t:git_changes_file_diff = state
+  call add(s:file_diff_instances, state)
+
+  let state.old_win = win_getid()
+  let state.old_buf = s:new_scratch(
+        \ printf('[GitChangesDiff %d] %s', id, a:spec.old_label), '')
+  call s:init_file_diff_buffer(state, 'old')
+
+  rightbelow vsplit
+  let state.new_win = win_getid()
+  let state.new_buf = s:new_scratch(
+        \ printf('[GitChangesDiff %d] %s', id, a:spec.new_label), '')
+  call s:init_file_diff_buffer(state, 'new')
+
+  if initial_buf > 0 && bufexists(initial_buf)
+        \ && empty(bufname(initial_buf))
+        \ && !getbufvar(initial_buf, '&modified')
+    execute 'silent! bwipeout ' . initial_buf
+  endif
+
+  let total = winwidth(state.old_win) + winwidth(state.new_win) + 1
+  call win_gotoid(state.old_win)
+  silent! execute 'vertical resize ' . max([20, total / 2])
+
+  call s:diff_on(state)
+  call s:file_diff_activate(state)
+  call s:start_sxs_fetch(state)
+
+  call s:set_cursor(state.old_win, 1)
+  call s:set_cursor(state.new_win, 1)
+  call s:scroll_top(state.old_win)
+  call s:scroll_top(state.new_win)
+  call win_gotoid(state.new_win)
+endfunction
+
+function! s:init_file_diff_buffer(state, side) abort
+  let b:git_changes_file_diff = a:state
+  let b:gc_kind = 'filediff'
+  let b:gc_side = a:side
+  call s:setup_diff_window()
+  call s:map_keys('quit', ':<C-u>call ' . s:sid . 'close_file_diff_tab()<CR>')
+  call s:map_keys('refresh', ':<C-u>call ' . s:sid . 'refresh_file_diff()<CR>')
+  call s:map_keys('stage', ':<C-u>call ' . s:sid . 'stage_file_diff("stage")<CR>')
+  call s:map_keys('unstage', ':<C-u>call ' . s:sid . 'stage_file_diff("unstage")<CR>')
+  call s:map_keys('staged_view', ':<C-u>call ' . s:sid . 'toggle_staged_file_diff()<CR>')
+  call s:map_keys('file_discard_diff', ':<C-u>call ' . s:sid . 'discard_file_diff()<CR>')
+  call s:map_keys('cycle_next', ':<C-u>call ' . s:sid . 'cycle_file_diff(1)<CR>')
+  call s:map_keys('cycle_prev', ':<C-u>call ' . s:sid . 'cycle_file_diff(-1)<CR>')
+endfunction
+
+function! s:diffopt_with_ignore(diffopt, ignore) abort
+  " The command's -b/-w flags decide whitespace handling.  Drop any ignore
+  " entries from the user's global diffopt for the duration of this view.
+  let ignored = ['iwhite', 'iwhiteall', 'iwhiteeol', 'iblank']
+  let items = []
+  for item in split(a:diffopt, ',')
+    if !empty(item) && index(ignored, item) < 0
+      call add(items, item)
+    endif
+  endfor
+  if a:ignore ==# 'iwhiteall'
+    call add(items, 'iwhiteall')
+  elseif a:ignore ==# 'iwhite'
+    call add(items, 'iwhite')
+  endif
+  return join(items, ',')
+endfunction
+
+" diffopt is a global option in Vim and Neovim.  Apply the view's ignore
+" setting only while its tab is active, and restore it when leaving, so other
+" diff windows are never affected.
+function! s:file_diff_activate(state) abort
+  if empty(a:state) || !s:file_diff_alive(a:state)
+    return
+  endif
+  if s:file_diff_active is a:state
+    return
+  endif
+
+  call s:file_diff_deactivate(s:file_diff_active)
+  let a:state.diffopt_saved = &g:diffopt
+  let &g:diffopt = s:diffopt_with_ignore(&g:diffopt, a:state.spec.ignore)
+  let s:file_diff_active = a:state
+  call s:file_diff_update(a:state)
+endfunction
+
+function! s:file_diff_deactivate(state) abort
+  if empty(a:state) || s:file_diff_active isnot a:state
+    return
+  endif
+  let &g:diffopt = get(a:state, 'diffopt_saved', &g:diffopt)
+  let s:file_diff_active = {}
+endfunction
+
+function! s:file_diff_update(state) abort
+  let winid = s:win_exists(get(a:state, 'old_win', 0))
+        \ ? a:state.old_win : get(a:state, 'new_win', 0)
+  if s:win_exists(winid)
+    call win_execute(winid, 'silent! diffupdate')
+  endif
+endfunction
+
+function! s:file_diff_tab_exists(tabnr) abort
+  for info in gettabinfo()
+    if info.tabnr == a:tabnr
+      return 1
+    endif
+  endfor
+  return 0
+endfunction
+
+function! s:file_diff_on_tab_enter() abort
+  let state = get(t:, 'git_changes_file_diff', {})
+  if !empty(state)
+    call s:file_diff_activate(state)
+  endif
+endfunction
+
+function! s:file_diff_on_tab_leave() abort
+  let state = get(t:, 'git_changes_file_diff', {})
+  if !empty(state)
+    call s:file_diff_deactivate(state)
+  endif
+endfunction
+
+function! s:file_diff_on_tab_closed() abort
+  if empty(s:file_diff_active)
+    call filter(s:file_diff_instances, 's:file_diff_alive(v:val)')
+    return
+  endif
+  if !s:file_diff_tab_exists(get(s:file_diff_active, 'tab', 0))
+    call s:file_diff_deactivate(s:file_diff_active)
+  endif
+  call filter(s:file_diff_instances, 's:file_diff_alive(v:val)')
+endfunction
+
+function! s:file_diff_on_buf_wipeout(buf) abort
+  if !empty(s:file_diff_active)
+        \ && (a:buf == get(s:file_diff_active, 'old_buf', -1)
+        \     || a:buf == get(s:file_diff_active, 'new_buf', -1))
+    call s:file_diff_deactivate(s:file_diff_active)
+  endif
+  call filter(s:file_diff_instances, 's:file_diff_alive(v:val)')
+endfunction
+
+augroup git_changes_file_diff
+  autocmd!
+  execute 'autocmd TabEnter * call ' . s:sid . 'file_diff_on_tab_enter()'
+  execute 'autocmd TabLeave * call ' . s:sid . 'file_diff_on_tab_leave()'
+  execute 'autocmd TabClosed * call ' . s:sid . 'file_diff_on_tab_closed()'
+  execute 'autocmd BufWipeout * call ' . s:sid
+        \ . 'file_diff_on_buf_wipeout(str2nr(expand("<abuf>")))'
+augroup END
+
+function! s:diff_numstat_args(spec) abort
+  let args = ['diff', '--numstat']
+  if a:spec.ignore ==# 'iwhiteall'
+    call add(args, '-w')
+  elseif a:spec.ignore ==# 'iwhite'
+    call add(args, '-b')
+  endif
+
+  if a:spec.new_kind ==# 'index'
+    call add(args, '--cached')
+  endif
+
+  if a:spec.new_kind ==# 'ref'
+    call add(args, a:spec.refs[0])
+    call add(args, a:spec.refs[1])
+  elseif !empty(a:spec.refs)
+    call add(args, a:spec.refs[0])
+  elseif a:spec.new_kind ==# 'index' && a:spec.has_head
+    call add(args, 'HEAD')
+  endif
+
+  call add(args, '--')
+  call add(args, ':(literal)' . a:spec.path)
+  return args
+endfunction
+
+function! s:diff_path_is_untracked(root, spec) abort
+  if s:git_run(a:root, 'ls-files --error-unmatch -- '
+        \ . shellescape(':(literal)' . a:spec.path)).ok
+    return 0
+  endif
+  for expr in [a:spec.old_expr, a:spec.new_expr]
+    if !empty(expr)
+          \ && s:git_run(a:root, 'cat-file -e ' . shellescape(expr)).ok
+      return 0
+    endif
+  endfor
+  return filereadable(a:root . '/' . a:spec.path)
+endfunction
+
+function! s:analyze_diff(root, spec) abort
+  let result = {'binary': 0, 'clean': 0}
+
+  if a:spec.new_kind ==# 'worktree'
+        \ && s:worktree_file_is_binary(a:root, a:spec.path)
+    let result.binary = 1
+  endif
+
+  let args = s:diff_numstat_args(a:spec)
+  let out = s:git(a:root, join(map(args, 'shellescape(v:val)'), ' '))
+  for line in out
+    if line =~# '^-\t-\t'
+      let result.binary = 1
+    endif
+  endfor
+
+  if empty(out) && a:spec.has_head
+        \ && !s:diff_path_is_untracked(a:root, a:spec)
+    let result.clean = 1
+  endif
+  return result
+endfunction
+
+function! s:start_sxs_fetch(state) abort
+  if !s:file_diff_alive(a:state)
+    return
+  endif
+
+  let token = get(a:state, 'diff_req', 0) + 1
+  let a:state.diff_req = token
+  call s:job_stop(a:state, 'diff-old')
+  call s:job_stop(a:state, 'diff-new')
+
+  let spec = a:state.spec
+  let analysis = s:analyze_diff(a:state.root, spec)
+  if analysis.binary
+    call s:show_side_message(a:state, ['(binary file - no side-by-side diff)'])
+    return
+  endif
+  let a:state.clean = analysis.clean
+
+  let ctx = {
+        \ 'token': token,
+        \ 'old': [],
+        \ 'new': [],
+        \ 'old_path': spec.path,
+        \ 'new_path': spec.path,
+        \ 'old_label': spec.old_label,
+        \ 'new_label': spec.new_label,
+        \ 'file': {'path': spec.path},
+        \ 'entry': {},
+        \ 'pending': 0,
+        \ }
+  if spec.new_kind ==# 'worktree'
+    let ctx.new = s:read_worktree(a:state.root, spec.path)
+  endif
+
+  let old_job = !empty(spec.old_expr)
+  let new_job = spec.new_kind !=# 'worktree'
+  let ctx.pending = (old_job ? 1 : 0) + (new_job ? 1 : 0)
+  if ctx.pending == 0
+    call s:apply_sxs_content(a:state, ctx)
+    return
+  endif
+
+  if old_job
+    call s:git_job(a:state, 'diff-old', 'diff_req', token,
+          \ ['show', spec.old_expr],
+          \ function('s:on_sxs_part', [a:state, ctx, 'old']))
+  endif
+  if new_job
+    call s:git_job(a:state, 'diff-new', 'diff_req', token,
+          \ ['show', spec.new_expr],
+          \ function('s:on_sxs_part', [a:state, ctx, 'new']))
+  endif
+endfunction
+
+function! s:on_sxs_part(state, ctx, side, result) abort
+  if get(a:state, 'diff_req', 0) != a:ctx.token
+    return
+  endif
+  if !s:file_diff_alive(a:state)
+    return
+  endif
+
+  let a:ctx[a:side] = a:result.out
+  let a:ctx.pending -= 1
+  if a:ctx.pending <= 0
+    call s:apply_sxs_content(a:state, a:ctx)
+  endif
+endfunction
+
+function! s:apply_sxs_content(state, ctx) abort
+  if get(a:state, 'diff_req', 0) != a:ctx.token
+    return
+  endif
+  if !s:file_diff_alive(a:state)
+    return
+  endif
+
+  call s:apply_diff(a:state, a:ctx)
+  if get(a:state, 'clean', 0)
+    echomsg 'GitChangesDiff: No changes: ' . a:state.spec.path
+  endif
+endfunction
+
+function! s:refresh_file_diff() abort
+  let state = get(b:, 'git_changes_file_diff', {})
+  if empty(state) || !s:file_diff_alive(state)
+    return
+  endif
+
+  call s:start_sxs_fetch(state)
+endfunction
+
+function! s:stage_file_diff(mode) abort
+  let state = get(b:, 'git_changes_file_diff', {})
+  if empty(state) || !s:file_diff_alive(state)
+    return
+  endif
+
+  let spec = state.spec
+  if spec.new_kind ==# 'ref'
+    call s:err('stage/unstage is not available when comparing two refs')
+    return
+  endif
+
+  let path = spec.path
+  let pathspec = shellescape(':(literal)' . path)
+
+  if a:mode ==# 'stage'
+    if !s:git_do(state.root, 'add -A -- ' . pathspec)
+      return
+    endif
+    echomsg 'Staged: ' . path
+  else
+    let result = s:git_run(state.root,
+          \ 'diff --cached --quiet -- ' . pathspec)
+    if result.code != 1
+      echomsg 'Not staged: ' . path
+      return
+    endif
+
+    if spec.has_head
+      let args = 'reset -q HEAD -- ' . pathspec
+    else
+      let args = 'rm -q --cached -- ' . pathspec
+    endif
+    if !s:git_do(state.root, args)
+      return
+    endif
+    echomsg 'Unstaged: ' . path
+  endif
+
+  call s:refresh_file_diff()
+endfunction
+
+function! s:toggle_staged_file_diff() abort
+  let state = get(b:, 'git_changes_file_diff', {})
+  if empty(state) || !s:file_diff_alive(state)
+    return
+  endif
+
+  let spec = state.spec
+  if len(spec.refs) > 1
+    call s:err('staged view is not available when comparing two refs')
+    return
+  endif
+
+  let spec.cached = !spec.cached
+  call s:build_diff_labels(spec)
+  call s:refresh_file_diff()
+endfunction
+
+function! s:discard_file_diff() abort
+  let state = get(b:, 'git_changes_file_diff', {})
+  if empty(state) || !s:file_diff_alive(state)
+    return
+  endif
+
+  let spec = state.spec
+  if spec.new_kind ==# 'ref'
+    call s:err('discard is not available when comparing two refs')
+    return
+  endif
+
+  let path = spec.path
+  let pathspec = shellescape(':(literal)' . path)
+  let abs = state.root . '/' . path
+  let tracked = s:git_run(state.root,
+        \ 'ls-files --error-unmatch -- ' . pathspec).ok
+
+  if !tracked
+    if !filereadable(abs)
+      echomsg 'No file to discard: ' . path
+      return
+    endif
+    if get(g:, 'git_changes_confirm_discard', 1)
+          \ && s:prompt_confirm('Delete untracked file ' . path . '?',
+          \                     "&Yes\n&No", 2) != 1
+      return
+    endif
+    if delete(abs) != 0
+      call s:err('failed to delete: ' . path)
+      return
+    endif
+    echomsg 'Deleted: ' . path
+    call s:close_file_diff(state)
+    return
+  endif
+
+  let unstaged = s:git_run(state.root, 'diff --quiet -- ' . pathspec)
+  if unstaged.code == 0
+    echomsg 'No unstaged changes: ' . path
+    return
+  endif
+
+  if get(g:, 'git_changes_confirm_discard', 1)
+        \ && s:prompt_confirm(
+        \      'Discard unstaged changes for ' . path . '?',
+        \      "&Yes\n&No", 2) != 1
+    return
+  endif
+
+  if !s:git_do(state.root, 'checkout -- ' . pathspec)
+    return
+  endif
+  echomsg 'Discarded unstaged changes: ' . path
+  call s:refresh_file_diff()
+endfunction
+
+function! s:cycle_file_diff(delta) abort
+  let state = get(b:, 'git_changes_file_diff', {})
+  if empty(state)
+    return
+  endif
+  let target = a:delta > 0 ? state.new_win : state.old_win
+  if s:win_exists(target)
+    call win_gotoid(target)
+  endif
+endfunction
+
+function! s:file_diff_alive(state) abort
+  let old_buf = get(a:state, 'old_buf', 0)
+  let new_buf = get(a:state, 'new_buf', 0)
+  return old_buf > 0 && bufexists(old_buf)
+        \ && new_buf > 0 && bufexists(new_buf)
+        \ && s:win_exists(get(a:state, 'old_win', 0))
+        \ && s:win_exists(get(a:state, 'new_win', 0))
+endfunction
+
+function! s:close_file_diff(state) abort
+  call s:file_diff_deactivate(a:state)
+  call s:job_stop(a:state, 'diff-old')
+  call s:job_stop(a:state, 'diff-new')
+
+  let tabnr = 0
+  for winid in [get(a:state, 'old_win', 0), get(a:state, 'new_win', 0)]
+    if s:win_exists(winid)
+      let tabwin = win_id2tabwin(winid)
+      if !empty(tabwin) && tabwin[0] > 0
+        let tabnr = tabwin[0]
+        break
+      endif
+    endif
+  endfor
+
+  call filter(s:file_diff_instances, 'v:val isnot a:state')
+  if tabnr > 0
+    execute 'tabclose ' . tabnr
+  endif
+endfunction
+
+function! s:close_file_diff_tab() abort
+  let state = get(b:, 'git_changes_file_diff', {})
+  if !empty(state)
+    call s:close_file_diff(state)
+  else
+    silent! tabclose
+  endif
+endfunction
+
+function! git_changes#complete_diff(arglead, cmdline, cursorpos) abort
+  let before = strpart(a:cmdline, 0, a:cursorpos)
+  let tokens = split(before, '\s\+')
+  if index(tokens, '--') >= 0
+    return getcompletion(a:arglead, 'file')
+  endif
+
+  let result = []
+  let seen = {}
+  for flag in ['--staged', '--cached', '-w',
+        \ '--ignore-all-space', '-b', '--ignore-space-change', '--']
+    if stridx(flag, a:arglead) == 0 && !has_key(seen, flag)
+      let seen[flag] = 1
+      call add(result, flag)
+    endif
+  endfor
+
+  for ref in git_changes#complete_refs(a:arglead, a:cmdline, a:cursorpos)
+    if !has_key(seen, ref)
+      let seen[ref] = 1
+      call add(result, ref)
+    endif
+  endfor
+  return result
 endfunction

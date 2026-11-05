@@ -25,7 +25,11 @@ Plug 'lyuangg/vim-git-changes'
 return {
   {
     "lyuangg/vim-git-changes",
-    cmd = { "GitChanges", "GitChangesQuit" },
+    cmd = {
+      "GitChanges",
+      "GitChangesQuit",
+      "GitChangesDiff",
+    },
   },
 }
 ```
@@ -61,6 +65,51 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 ```
 
 文件列表中的帮助默认隐藏，按 `?` 显示，再按 `?` 隐藏。
+
+主 GitChanges 窗口和单文件 diff 窗口默认都会折叠未改动区域。按 `zR`
+展开完整文件，用 `zo` / `zc` 折叠或展开当前块，或设置
+`g:git_changes_fold = 0` 关闭折叠。
+
+### 单文件 diff
+
+```vim
+" 当前文件：暂存区与工作区（即普通 git diff）
+:GitChangesDiff
+
+" 一个 ref 与工作区
+:GitChangesDiff HEAD~3
+
+" 两个 ref
+:GitChangesDiff main HEAD
+
+" 暂存区改动（HEAD 与 index）；--staged 和 --cached 等价
+:GitChangesDiff --staged
+:GitChangesDiff --cached
+
+" 忽略所有空白差异 / 忽略空白数量差异
+:GitChangesDiff -w
+:GitChangesDiff -b
+
+" 指定其它文件：-- 后可以带一个路径
+:GitChangesDiff -- src/main.c
+
+" 路径带空格时用单引号或反斜杠
+:GitChangesDiff -- 'src/my file.c'
+:GitChangesDiff -- src/my\ file.c
+```
+
+| 按键 | 操作 |
+| --- | --- |
+| `q` | 关闭 diff tab |
+| `r` | 重新读取两侧内容 |
+| `s` | stage 当前文件 |
+| `u` | unstage 当前文件 |
+| `D` | discard 当前文件的未暂存修改 |
+| `dS` | 切换暂存区对比（`git diff --staged`） |
+| `Tab` / `S-Tab` | 在两个窗口间切换 |
+| `]c` / `[c` | 跳到下一个 / 上一个差异块 |
+| `zo` / `zc` | 打开 / 关闭当前折叠 |
+| `zR` / `zM` | 打开 / 关闭所有折叠 |
 
 ### 文件列表
 
@@ -116,6 +165,9 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 ## 配置
 
 ```vim
+" 是否折叠 diff 窗口中的未改动区域（0 = 显示完整文件）
+let g:git_changes_fold = 1
+
 " 左侧栏宽度
 let g:git_changes_width = 40
 
@@ -193,6 +245,8 @@ let g:git_changes_keymaps = {
 | `unstage_all` | `U` |
 | `toggle_stage` | `-` |
 | `file_discard` | `d` |
+| `file_discard_diff` | `D` |
+| `staged_view` | `dS` |
 | `open_file` | `o` |
 | `scroll_half_down` | `<C-d>` |
 | `scroll_half_up` | `<C-u>` |

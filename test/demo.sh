@@ -88,9 +88,22 @@ echo "               branch: j/k select, Enter show, co checkout,"
 echo "               n new, d delete, yy copy name"
 echo "               commit: e edit message"
 echo "  n/p/P/c      work in files, commits, and branches"
+echo "  zR / zM      expand / fold unchanged blocks in the diff"
+echo "  dS           toggle WORK diff: index<->worktree / HEAD<->index"
+echo "  D            discard unstaged changes for the selected file"
 echo "  q / :GitChangesQuit  quit the whole tab (q also in diff)"
 echo
 echo "After quitting, try: :GitChanges HEAD~2 HEAD"
+echo
+echo "File diff commands (run from a file buffer, e.g. :edit big.txt):"
+echo "  :GitChangesDiff          index <-> working tree (plain git diff)"
+echo "  :GitChangesDiff --staged HEAD <-> index"
+echo "  :GitChangesDiff -b       ignore whitespace amount"
+echo "  q / r                    close the diff tab / re-read both sides"
+echo "  s / u                    stage / unstage the file, then re-diff"
+echo "  dS                       toggle git diff / git diff --staged"
+echo "  D                        discard unstaged changes (confirmation)"
+echo "  zR / zM                  expand / fold unchanged blocks"
 echo
 
 vim -N -u "$vimrc" -c 'GitChanges'
