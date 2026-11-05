@@ -96,8 +96,12 @@ function! s:pane_state_text(state, kind) abort
     endif
     return entry.short . '  ' . s:truncate(entry.subject, 48)
   elseif a:kind ==# 'commits'
-    let commits = len(filter(copy(a:state.commits), 'v:val.kind ==# "commit"'))
-    return printf('%s (%d commits)', a:state.list_title, commits)
+    let loaded = get(a:state, 'commit_loaded', -1)
+    if loaded < 0
+      let loaded = len(filter(copy(a:state.commits), 'v:val.kind ==# "commit"'))
+    endif
+    let more = get(a:state, 'commit_has_more', 0) ? '+' : ''
+    return printf('%s (%d%s commits)', a:state.list_title, loaded, more)
   endif
 
   for branch in a:state.branches
@@ -372,6 +376,7 @@ function! s:default_keymaps() abort
         \ 'copy_commit': 'yy',
         \ 'copy_branch': 'yy',
         \ 'edit_message': 'e',
+        \ 'load_more': 'l',
         \ 'commit': 'cc',
         \ 'commit_editor': 'C',
         \ 'pull': 'p',
@@ -489,6 +494,7 @@ function! s:init_list_buffer(state, kind) abort
   elseif a:kind ==# 'commits'
     call s:map_keys('copy_commit', ':<C-u>call ' . s:sid . 'copy_commit_hash()<CR>')
     call s:map_keys('edit_message', ':<C-u>call ' . s:sid . 'edit_commit_message()<CR>')
+    call s:map_keys('load_more', ':<C-u>call ' . s:sid . 'load_more_commits()<CR>')
   endif
 
   call s:map_quit()
@@ -1050,7 +1056,7 @@ function! s:do_refresh_all(state) abort
     let state.updating = 1
     try
       call s:load_branches(state, keep_branch)
-      call s:load_commits(state)
+      call s:load_commits(state, 'reload')
     finally
       let state.updating = 0
     endtry
@@ -1467,7 +1473,7 @@ endfunction
 function! s:reload_after_reword(state, sha) abort
   let a:state.updating = 1
   try
-    call s:load_commits(a:state)
+    call s:load_commits(a:state, 'reload')
   finally
     let a:state.updating = 0
   endtry
@@ -1677,7 +1683,7 @@ function! s:reload_current_branch(state) abort
   let a:state.updating = 1
   try
     call s:load_branches(a:state, '')
-    call s:load_commits(a:state)
+    call s:load_commits(a:state, 'reload')
     if empty(a:state.commits)
       call s:show_no_commits(a:state)
     else
@@ -1767,7 +1773,7 @@ function! s:refresh_after_push(state) abort
 
   let a:state.updating = 1
   try
-    call s:load_commits(a:state)
+    call s:load_commits(a:state, 'reload')
   finally
     let a:state.updating = 0
   endtry
@@ -2606,13 +2612,56 @@ function! s:unpushed_shas(state) abort
   return unpushed
 endfunction
 
-function! s:load_commits(state) abort
-  let limit = s:opt_int('git_changes_max_commits', 200)
+function! s:render_commits(state) abort
+  let more = get(a:state, 'commit_has_more', 0)
+  let lines = ['# ' . a:state.list_title . '  ('
+        \ . get(a:state, 'commit_loaded', 0) . (more ? '+' : '')
+        \ . ' commits)' . (more ? '  ' . s:keymaps().load_more . ':more' : '')]
+  for entry in a:state.commits
+    let prefix = get(entry, 'unpushed', 0) ? '↑ ' : '  '
+    if entry.kind ==# 'worktree'
+      call add(lines, prefix . entry.short . '  ' . entry.subject)
+    elseif entry.kind ==# 'compare'
+      call add(lines, prefix . entry.short . '  '
+            \ . s:truncate(entry.old_label . ' ↔ ' . entry.new_label, 88))
+    else
+      call add(lines, prefix . entry.short . '  '
+            \ . s:truncate(entry.subject, 88))
+    endif
+  endfor
+  if get(a:state, 'commit_loaded', 0) == 0 && !empty(a:state.commits)
+    call add(lines, '   (no commits in range)')
+  elseif empty(a:state.commits)
+    call add(lines, '   (no commits)')
+  endif
+
+  call s:set_lines(a:state.commits_buf, lines)
+  call s:update_statusline(a:state)
+endfunction
+
+" mode: 'initial' resets to the first page, 'reload' keeps the pages already
+" loaded, 'append' fetches the next page after the loaded commits.
+function! s:load_commits(state, ...) abort
+  let mode = a:0 ? a:1 : 'initial'
+  let page = s:opt_int('git_changes_max_commits', 200)
+  let loaded = get(a:state, 'commit_loaded', 0)
+  if mode ==# 'append'
+    let skip = loaded
+    let want = page
+  elseif mode ==# 'reload'
+    let skip = 0
+    let want = max([loaded, page])
+  else
+    let skip = 0
+    let want = page
+  endif
+
   let skip_merges = get(g:, 'git_changes_exclude_merges', 1)
   let no_merges = skip_merges ? '--no-merges ' : ''
   let sep = nr2char(31)
   let format = '--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%ad'
-  let args = 'log ' . no_merges . '--date=short --max-count=' . limit . ' ' . format
+  let args = 'log ' . no_merges . '--date=short --skip=' . skip
+        \ . ' --max-count=' . (want + 1) . ' ' . format
   if !empty(a:state.log_range)
     let args .= ' ' . a:state.log_range
   elseif !empty(a:state.log_ref)
@@ -2641,34 +2690,52 @@ function! s:load_commits(state) abort
     endif
   endfor
 
-  let entries = copy(a:state.start_entries)
-  call extend(entries, real_commits)
-  let a:state.commits = entries
-
-  let lines = ['# ' . a:state.list_title . '  (' . len(real_commits) . ' commits)']
-  for entry in entries
-    let prefix = get(entry, 'unpushed', 0) ? '↑ ' : '  '
-    if entry.kind ==# 'worktree'
-      call add(lines, prefix . entry.short . '  ' . entry.subject)
-    elseif entry.kind ==# 'compare'
-      call add(lines, prefix . entry.short . '  '
-            \ . s:truncate(entry.old_label . ' ↔ ' . entry.new_label, 88))
-    else
-      call add(lines, prefix . entry.short . '  '
-            \ . s:truncate(entry.subject, 88))
-    endif
-  endfor
-  if empty(real_commits) && !empty(entries)
-    call add(lines, '   (no commits in range)')
-  elseif empty(entries)
-    call add(lines, '   (no commits)')
+  let has_more = len(real_commits) > want
+  if has_more
+    let real_commits = real_commits[0 : want - 1]
   endif
 
-  call s:set_lines(a:state.commits_buf, lines)
-  if !empty(entries)
+  if mode ==# 'append'
+    call extend(a:state.commits, real_commits)
+    let a:state.commit_loaded = loaded + len(real_commits)
+  else
+    let entries = copy(a:state.start_entries)
+    call extend(entries, real_commits)
+    let a:state.commits = entries
+    let a:state.commit_loaded = len(real_commits)
+  endif
+  let a:state.commit_has_more = has_more
+
+  call s:render_commits(a:state)
+  if mode !=# 'append' && !empty(a:state.commits)
     call s:set_cursor(a:state.commits_win, a:state.commits_header + 1)
   endif
-  call s:update_statusline(a:state)
+endfunction
+
+function! s:load_more_commits() abort
+  let state = s:cur_state()
+  if empty(state)
+    return
+  endif
+  if !get(state, 'commit_has_more', 0)
+    echomsg 'GitChanges: all commits are already loaded'
+    return
+  endif
+
+  let before = get(state, 'commit_loaded', 0)
+  let state.updating = 1
+  try
+    call s:load_commits(state, 'append')
+  catch
+    call s:err(v:exception)
+  finally
+    let state.updating = 0
+  endtry
+  let added = get(state, 'commit_loaded', 0) - before
+  if added > 0
+    echomsg printf('GitChanges: loaded %d more commits (%d total)',
+          \ added, state.commit_loaded)
+  endif
 endfunction
 
 function! s:load_files(state, entry) abort
@@ -3164,6 +3231,8 @@ function! s:open_tab(root, parsed, tabnr) abort
         \ 'root': root,
         \ 'tab': 0,
         \ 'commits': [],
+        \ 'commit_loaded': 0,
+        \ 'commit_has_more': 0,
         \ 'files': [],
         \ 'commit_index': -1,
         \ 'file_index': -1,

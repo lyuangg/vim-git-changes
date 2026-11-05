@@ -96,6 +96,7 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 | `j` / `k` | 切换 commit |
 | `J` / `K` | 滚动 diff |
 | `e` | 编辑未 push commit 的 message |
+| `l` | 列表显示 `200+` 时，再加载下一批 commit |
 | `yy` | 复制完整 commit hash |
 | `Esc` | 回到工作区改动 |
 
@@ -124,7 +125,7 @@ let g:git_changes_commits_height = 12
 " 分支列表高度上限
 let g:git_changes_branches_height = 8
 
-" 最多加载多少个 commit
+" 每页加载多少个 commit（按 l 加载下一批）
 let g:git_changes_max_commits = 200
 
 " 是否排除 merge commit
@@ -199,6 +200,7 @@ let g:git_changes_keymaps = {
 | `copy_commit` | `yy` |
 | `copy_branch` | `yy` |
 | `edit_message` | `e` |
+| `load_more` | `l` |
 | `commit` | `cc` |
 | `commit_editor` | `C` |
 | `pull` | `p` |

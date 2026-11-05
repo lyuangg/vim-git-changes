@@ -96,6 +96,7 @@ Help is hidden by default in the file list. Press `?` to show it and `?` again t
 | `j` / `k` | Move between commits |
 | `J` / `K` | Scroll the diff |
 | `e` | Edit an unpushed commit message |
+| `l` | Load the next batch of commits when the list says `200+` |
 | `yy` | Copy the full commit hash |
 | `Esc` | Go back to the working tree changes |
 
@@ -138,7 +139,7 @@ let g:git_changes_commits_height = 12
 " Branch list height limit
 let g:git_changes_branches_height = 8
 
-" Maximum number of commits to load
+" Commits loaded per page (press l to load the next batch)
 let g:git_changes_max_commits = 200
 
 " Exclude merge commits from the commit list
@@ -214,6 +215,7 @@ let g:git_changes_keymaps = {
 | `copy_commit` | `yy` |
 | `copy_branch` | `yy` |
 | `edit_message` | `e` |
+| `load_more` | `l` |
 | `commit` | `cc` |
 | `commit_editor` | `C` |
 | `pull` | `p` |
