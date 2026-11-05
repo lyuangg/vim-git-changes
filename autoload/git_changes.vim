@@ -167,6 +167,9 @@ function! s:report(state, msg, kind) abort
   endif
 endfunction
 
+function! s:noop() abort
+endfunction
+
 function! s:opt_int(name, default) abort
   let value = get(g:, a:name, a:default)
   return type(value) == type(0) && value > 0 ? value : a:default
@@ -3974,10 +3977,24 @@ function! git_changes#commit(...) abort
   endif
 
   let state = s:find_state_for_root(root)
+  let arg = a:0 ? trim(a:1) : ''
+
+  if arg ==# '-e' || arg ==# '--edit'
+    call s:open_commit_editor(root,
+          \ empty(state)
+          \ ? function('s:noop')
+          \ : function('s:reload_current_branch', [state]))
+    return
+  endif
+
   let ok = a:0 ? s:commit_index(root, a:1) : s:commit_index(root)
   if ok && !empty(state)
     call s:reload_current_branch(state)
   endif
+endfunction
+
+function! git_changes#complete_commit(arglead, cmdline, cursorpos) abort
+  return filter(['-e', '--edit'], 'stridx(v:val, a:arglead) == 0')
 endfunction
 
 function! git_changes#pull() abort

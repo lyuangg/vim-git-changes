@@ -83,6 +83,9 @@ GitChanges 窗口，执行后也会同步刷新。
 :GitChangesCommit
 :GitChangesCommit fix typo in README
 
+" 打开新标签页编辑 commit message，:w 提交
+:GitChangesCommit -e
+
 " pull / push 当前分支
 :GitChangesPull
 :GitChangesPush

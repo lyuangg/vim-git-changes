@@ -83,6 +83,9 @@ tab is open for the repository, it is refreshed as well.
 :GitChangesCommit
 :GitChangesCommit fix typo in README
 
+" Edit the message in a new tab, then :w to commit
+:GitChangesCommit -e
+
 " Pull or push the current branch
 :GitChangesPull
 :GitChangesPush
