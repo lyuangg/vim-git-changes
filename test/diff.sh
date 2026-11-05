@@ -383,10 +383,10 @@ export GCDIFF_OUT="$out"
 
 case "$(basename "$VIM_BIN")" in
   nvim|nvim-*)
-    "$VIM_BIN" --headless -u NONE -c "source $script"
+    "$VIM_BIN" --headless -i NONE -u NONE -c "source $script"
     ;;
   *)
-    "$VIM_BIN" -Nu NONE -es -c "source $script"
+    "$VIM_BIN" -Nu NONE -i NONE -es -c "source $script"
     ;;
 esac
 

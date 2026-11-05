@@ -110,4 +110,4 @@ echo "  D                        discard unstaged changes (confirmation)"
 echo "  zR / zM                  expand / fold unchanged blocks"
 echo
 
-vim -N -u "$vimrc" -c 'GitChanges'
+vim -N -i NONE -u "$vimrc" -c 'GitChanges'
