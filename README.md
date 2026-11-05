@@ -29,6 +29,9 @@ return {
       "GitChanges",
       "GitChangesQuit",
       "GitChangesDiff",
+      "GitChangesCommit",
+      "GitChangesPull",
+      "GitChangesPush",
     },
   },
 }
@@ -69,6 +72,21 @@ Help is hidden by default in the file list. Press `?` to show it and `?` again t
 Diff panes fold unchanged blocks by default, both in the main browser and in
 the file diff views. Press `zR` to show the full files, use `zo` / `zc` to
 toggle one fold, or set `g:git_changes_fold = 0` to keep everything expanded.
+
+### Commit, pull, push
+
+These run from any buffer without opening the GitChanges tab. If a GitChanges
+tab is open for the repository, it is refreshed as well.
+
+```vim
+" Commit staged changes; asks for a message unless one is given
+:GitChangesCommit
+:GitChangesCommit fix typo in README
+
+" Pull or push the current branch
+:GitChangesPull
+:GitChangesPush
+```
 
 ### File diff
 

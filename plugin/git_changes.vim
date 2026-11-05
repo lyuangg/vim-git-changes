@@ -7,3 +7,6 @@ command! -bar -nargs=* -complete=customlist,git_changes#complete_refs GitChanges
 command! -bar GitChangesQuit   call git_changes#quit()
 command! -bar -nargs=* -complete=customlist,git_changes#complete_diff GitChangesDiff
       \ call git_changes#diff_open(<q-args>)
+command! -nargs=? GitChangesCommit call git_changes#commit(<q-args>)
+command! -bar GitChangesPull call git_changes#pull()
+command! -bar GitChangesPush call git_changes#push()

@@ -29,6 +29,9 @@ return {
       "GitChanges",
       "GitChangesQuit",
       "GitChangesDiff",
+      "GitChangesCommit",
+      "GitChangesPull",
+      "GitChangesPush",
     },
   },
 }
@@ -69,6 +72,21 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 主 GitChanges 窗口和单文件 diff 窗口默认都会折叠未改动区域。按 `zR`
 展开完整文件，用 `zo` / `zc` 折叠或展开当前块，或设置
 `g:git_changes_fold = 0` 关闭折叠。
+
+### Commit / Pull / Push 命令
+
+不需要进入 GitChanges 窗口，在任意 buffer 里都能执行；如果当前仓库已经打开了
+GitChanges 窗口，执行后也会同步刷新。
+
+```vim
+" 提交已暂存内容；不带参数时会提示输入 commit message
+:GitChangesCommit
+:GitChangesCommit fix typo in README
+
+" pull / push 当前分支
+:GitChangesPull
+:GitChangesPush
+```
 
 ### 单文件 diff
 

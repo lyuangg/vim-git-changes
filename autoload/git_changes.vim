@@ -155,6 +155,18 @@ function! s:set_status(state, msg, ...) abort
   redraw
 endfunction
 
+" Report progress for a view when there is one, or on the command line when
+" the action was run from a normal buffer.
+function! s:report(state, msg, kind) abort
+  if !empty(a:state)
+    call s:set_status(a:state, a:msg, a:kind)
+  elseif a:kind ==# 'error'
+    call s:err(a:msg)
+  else
+    echomsg 'GitChanges: ' . a:msg
+  endif
+endfunction
+
 function! s:opt_int(name, default) abort
   let value = get(g:, a:name, a:default)
   return type(value) == type(0) && value > 0 ? value : a:default
@@ -1783,13 +1795,15 @@ function! s:apply_edited_message() abort
 endfunction
 
 " Prompt for a commit message and commit the index. Returns 1 on success.
-function! s:commit_index(root) abort
+function! s:commit_index(root, ...) abort
   if !s:has_staged_changes(a:root, [])
     echomsg 'No staged changes to commit'
     return 0
   endif
 
-  let message = trim(s:prompt_input('Commit message: '))
+  let message = a:0 && !empty(trim(a:1))
+        \ ? trim(a:1)
+        \ : trim(s:prompt_input('Commit message: '))
   if empty(message)
     echomsg 'Commit cancelled'
     return 0
@@ -1989,12 +2003,12 @@ function! s:preferred_remote(root, ...) abort
   return index(remotes, 'origin') >= 0 ? 'origin' : remotes[0]
 endfunction
 
-function! s:push_result(state, out) abort
+function! s:push_result(root, out) abort
   if match(a:out, 'Everything up-to-date') >= 0
     return 'Everything up-to-date'
   endif
 
-  let upstream = s:upstream_ref(a:state.root)
+  let upstream = s:upstream_ref(a:root)
   return empty(upstream) ? 'Push complete' : 'Pushed to ' . upstream
 endfunction
 
@@ -2003,26 +2017,31 @@ function! s:pull_current() abort
   if empty(state)
     return
   endif
+  call s:pull_root(state.root, state)
+endfunction
 
-  call s:set_status(state, 'Pulling...', 'busy')
-  let result = s:git_run(state.root, 'pull --no-rebase --no-edit')
-  call s:reload_current_branch(state)
+function! s:pull_root(root, state) abort
+  call s:report(a:state, 'Pulling...', 'busy')
+  let result = s:git_run(a:root, 'pull --no-rebase --no-edit')
+  if !empty(a:state)
+    call s:reload_current_branch(a:state)
+  endif
 
   if !result.ok
     let detail = s:output_message(result.out)
     if detail =~? 'no tracking information\|no upstream branch'
-      call s:set_status(state, 'Cannot pull: no upstream branch. ' .
-            \ 'Press P to push and set the upstream first.', 'error')
+      call s:report(a:state,
+            \ 'Cannot pull: no upstream branch. Push first to set it.', 'error')
     else
-      call s:set_status(state, 'Pull failed: ' . detail, 'error')
+      call s:report(a:state, 'Pull failed: ' . detail, 'error')
     endif
     return
   endif
 
   if match(result.out, 'Already up to date') >= 0
-    call s:set_status(state, 'Already up to date', 'info')
+    call s:report(a:state, 'Already up to date', 'info')
   else
-    call s:set_status(state, 'Pull complete', 'info')
+    call s:report(a:state, 'Pull complete', 'info')
   endif
 endfunction
 
@@ -2058,36 +2077,41 @@ function! s:push_current() abort
   if empty(state)
     return
   endif
+  call s:push_root(state.root, state)
+endfunction
 
-  if empty(s:resolve_ref(state.root, 'HEAD'))
-    call s:set_status(state, 'Cannot push: no commits yet', 'error')
+function! s:push_root(root, state) abort
+  if empty(s:resolve_ref(a:root, 'HEAD'))
+    call s:report(a:state, 'Cannot push: no commits yet', 'error')
     return
   endif
 
-  call s:set_status(state, 'Pushing...', 'busy')
+  call s:report(a:state, 'Pushing...', 'busy')
 
-  if s:has_upstream(state.root)
-    let result = s:git_run(state.root, 'push')
+  if s:has_upstream(a:root)
+    let result = s:git_run(a:root, 'push')
     if !result.ok
-      call s:set_status(state, 'Push failed: ' . s:output_message(result.out),
+      call s:report(a:state, 'Push failed: ' . s:output_message(result.out),
             \ 'error')
       return
     endif
-    call s:refresh_after_push(state)
-    call s:set_status(state, s:push_result(state, result.out), 'info')
+    if !empty(a:state)
+      call s:refresh_after_push(a:state)
+    endif
+    call s:report(a:state, s:push_result(a:root, result.out), 'info')
     return
   endif
 
-  let branch = s:git_one(state.root, 'symbolic-ref --short -q HEAD')
+  let branch = s:git_one(a:root, 'symbolic-ref --short -q HEAD')
   if empty(branch)
-    call s:set_status(state, 'Cannot push: not on a branch (detached HEAD)',
+    call s:report(a:state, 'Cannot push: not on a branch (detached HEAD)',
           \ 'error')
     return
   endif
 
-  let remote = s:preferred_remote(state.root, branch)
+  let remote = s:preferred_remote(a:root, branch)
   if empty(remote)
-    call s:set_status(state, 'Cannot push: no remote configured', 'error')
+    call s:report(a:state, 'Cannot push: no remote configured', 'error')
     return
   endif
 
@@ -2095,21 +2119,23 @@ function! s:push_current() abort
     let question = printf('No upstream for "%s". Push to %s/%s and set upstream?',
           \ branch, remote, branch)
     if confirm(question, "&Yes\n&No", 1) != 1
-      call s:set_status(state, 'Push cancelled', 'info')
+      call s:report(a:state, 'Push cancelled', 'info')
       return
     endif
   endif
 
-  let result = s:git_run(state.root, 'push --set-upstream '
+  let result = s:git_run(a:root, 'push --set-upstream '
         \ . shellescape(remote) . ' ' . shellescape(branch))
   if !result.ok
-    call s:set_status(state, 'Push failed: ' . s:output_message(result.out),
+    call s:report(a:state, 'Push failed: ' . s:output_message(result.out),
           \ 'error')
     return
   endif
 
-  call s:refresh_after_push(state)
-  call s:set_status(state, s:push_result(state, result.out), 'info')
+  if !empty(a:state)
+    call s:refresh_after_push(a:state)
+  endif
+  call s:report(a:state, s:push_result(a:root, result.out), 'info')
 endfunction
 
 function! s:stage_current(mode) abort
@@ -3937,6 +3963,39 @@ function! git_changes#quit() abort
     return
   endif
   call s:quit_state(state)
+endfunction
+
+" Commit, pull, and push from any buffer without opening the GitChanges tab.
+function! git_changes#commit(...) abort
+  let root = s:repo_root()
+  if empty(root)
+    call s:err('not inside a Git repository')
+    return
+  endif
+
+  let state = s:find_state_for_root(root)
+  let ok = a:0 ? s:commit_index(root, a:1) : s:commit_index(root)
+  if ok && !empty(state)
+    call s:reload_current_branch(state)
+  endif
+endfunction
+
+function! git_changes#pull() abort
+  let root = s:repo_root()
+  if empty(root)
+    call s:err('not inside a Git repository')
+    return
+  endif
+  call s:pull_root(root, s:find_state_for_root(root))
+endfunction
+
+function! git_changes#push() abort
+  let root = s:repo_root()
+  if empty(root)
+    call s:err('not inside a Git repository')
+    return
+  endif
+  call s:push_root(root, s:find_state_for_root(root))
 endfunction
 
 
