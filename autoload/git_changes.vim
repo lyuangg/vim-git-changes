@@ -223,6 +223,145 @@ function! s:git_one(root, args) abort
   return empty(out) ? '' : out[0]
 endfunction
 
+" Run git in the background. {args} is a List of arguments (no shell escaping
+" needed). Output is collected and handed to {callback} from a close callback,
+" so it runs after all stdout lines have been received.
+function! s:job_stop(state, key) abort
+  let name = 'job_' . a:key
+  if has_key(a:state, name)
+    let job = a:state[name]
+    if has('nvim')
+      if jobwait([job], 0)[0] == -1
+        call jobstop(job)
+      endif
+    elseif job_status(job) ==# 'run'
+      call job_stop(job)
+    endif
+    unlet a:state[name]
+  endif
+  if has_key(a:state, 'jobtok_' . a:key)
+    unlet a:state['jobtok_' . a:key]
+  endif
+endfunction
+
+function! s:on_job_out(ctx, channel, msg) abort
+  call add(a:ctx.out, a:msg)
+endfunction
+
+function! s:on_job_close(state, key, token_key, token, ctx, callback, channel) abort
+  if get(a:state, 'jobtok_' . a:key, -1) == a:token
+    if has_key(a:state, 'job_' . a:key)
+      unlet a:state['job_' . a:key]
+    endif
+    unlet a:state['jobtok_' . a:key]
+  endif
+  if get(a:state, a:token_key, -1) != a:token
+    return
+  endif
+  if !s:state_alive(a:state)
+    return
+  endif
+  call a:callback(a:ctx)
+endfunction
+
+function! s:nvim_job_out(ctx, id, data, event) abort
+  call extend(a:ctx.out, a:data)
+endfunction
+
+function! s:nvim_job_err(ctx, id, data, event) abort
+  call extend(a:ctx.err, a:data)
+endfunction
+
+function! s:nvim_job_exit(state, key, token_key, token, ctx, callback, id, code, event) abort
+  " Buffered output ends with an empty string when the final line was
+  " newline-terminated; drop it to match the Vim line callbacks.
+  if !empty(a:ctx.out) && a:ctx.out[-1] ==# ''
+    call remove(a:ctx.out, -1)
+  endif
+  let a:ctx.status = a:code
+  call s:on_job_close(a:state, a:key, a:token_key, a:token, a:ctx, a:callback, 0)
+endfunction
+
+function! s:nvim_git_job(state, key, token_key, token, cmd, ctx, callback) abort
+  if !has('nvim-0.10')
+    " Older Neovim: fall back to a blocking call.
+    let a:ctx.out = systemlist(a:cmd)
+    if v:shell_error
+      let a:ctx.out = []
+    endif
+    call a:callback(a:ctx)
+    return
+  endif
+
+  try
+    let id = jobstart(a:cmd, {
+          \ 'stdout_buffered': v:true,
+          \ 'stderr_buffered': v:true,
+          \ 'on_stdout': function('s:nvim_job_out', [a:ctx]),
+          \ 'on_stderr': function('s:nvim_job_err', [a:ctx]),
+          \ 'on_exit': function('s:nvim_job_exit',
+          \     [a:state, a:key, a:token_key, a:token, a:ctx, a:callback]),
+          \ })
+  catch
+    call add(a:ctx.err, v:exception)
+    call a:callback(a:ctx)
+    return
+  endtry
+  if id <= 0
+    call add(a:ctx.err, 'failed to start git')
+    call a:callback(a:ctx)
+    return
+  endif
+  let a:state['job_' . a:key] = id
+  let a:state['jobtok_' . a:key] = a:token
+endfunction
+
+function! s:git_job(state, key, token_key, token, args, callback) abort
+  call s:job_stop(a:state, a:key)
+
+  let ctx = {'out': [], 'err': [], 'status': -1}
+  let cmd = ['git', '--no-pager', '-c', 'core.quotePath=false',
+        \ '-C', a:state.root] + a:args
+
+  if has('nvim')
+    call s:nvim_git_job(a:state, a:key, a:token_key, a:token,
+          \ cmd, ctx, a:callback)
+    return
+  endif
+
+  try
+    let job = job_start(cmd, {
+          \ 'in_io': 'null',
+          \ 'err_io': 'null',
+          \ 'out_mode': 'nl',
+          \ 'out_cb': function('s:on_job_out', [ctx]),
+          \ 'close_cb': function('s:on_job_close',
+          \     [a:state, a:key, a:token_key, a:token, ctx, a:callback]),
+          \ })
+  catch
+    call add(ctx.err, v:exception)
+    call a:callback(ctx)
+    return
+  endtry
+  if job_status(job) ==# 'fail'
+    call add(ctx.err, 'failed to start git')
+    call a:callback(ctx)
+    return
+  endif
+  let a:state['job_' . a:key] = job
+  let a:state['jobtok_' . a:key] = a:token
+endfunction
+
+function! s:cancel_jobs(state) abort
+  for key in ['branch_req', 'commit_req', 'files_req', 'diff_req']
+    let a:state[key] = get(a:state, key, 0) + 1
+  endfor
+  for key in ['branches', 'commits-log', 'commits-remote', 'commits-unpushed',
+        \ 'files', 'files-body', 'diff-check', 'diff-old', 'diff-new']
+    call s:job_stop(a:state, key)
+  endfor
+endfunction
+
 function! s:buf_linecount(buf) abort
   let info = getbufinfo(a:buf)
   if !empty(info) && has_key(info[0], 'linecount')
@@ -699,11 +838,22 @@ function! s:apply_file_diff(state) abort
   if a:state.file_index < 0 || a:state.file_index >= len(a:state.files)
     return
   endif
-  call s:show_diff(a:state, a:state.files[a:state.file_index])
+  let entry = a:state.commits[a:state.commit_index]
+  if get(a:state, 'files_entry', '') !=# s:entry_key(entry)
+    return
+  endif
+  call s:show_diff(a:state, a:state.files[a:state.file_index], entry)
+endfunction
+
+function! s:clear_files_state(state) abort
+  let a:state.files = []
+  let a:state.files_entry = ''
+  let a:state.file_index = -1
 endfunction
 
 function! s:schedule_commit_select(state, index) abort
   let a:state.commit_index = a:index
+  call s:clear_files_state(a:state)
   if get(a:state, 'file_timer', -1) != -1
     call timer_stop(a:state.file_timer)
     let a:state.file_timer = -1
@@ -854,6 +1004,10 @@ function! s:empty_message(entry) abort
   return '(no files changed in this commit)'
 endfunction
 
+function! s:entry_key(entry) abort
+  return get(a:entry, 'kind', '') . nr2char(31) . get(a:entry, 'sha', '')
+endfunction
+
 function! s:rerender_files(state) abort
   if empty(a:state.commits) || a:state.commit_index < 0
     return
@@ -862,6 +1016,9 @@ function! s:rerender_files(state) abort
   let a:state.updating = 1
   try
     let entry = a:state.commits[a:state.commit_index]
+    if get(a:state, 'files_entry', '') !=# s:entry_key(entry)
+      return
+    endif
     call s:render_files(a:state, entry, a:state.files)
 
     if empty(a:state.files)
@@ -955,33 +1112,36 @@ function! s:refresh_file_list(state, keep_path) abort
 
   let entry = a:state.commits[a:state.commit_index]
   let old_index = a:state.file_index
-  let a:state.updating = 1
-  try
-    call s:load_files(a:state, entry)
-    if empty(a:state.files)
-      let a:state.file_index = -1
-      call s:set_cursor(a:state.files_win, 1)
-      call s:show_side_message(a:state, [s:empty_message(entry)])
-      return
-    endif
+  call s:load_files(a:state, entry,
+        \ function('s:after_refresh_files',
+        \   [a:state, entry, a:keep_path, old_index]))
+endfunction
 
-    let new_index = -1
-    for i in range(len(a:state.files))
-      if a:state.files[i].path ==# a:keep_path
-        let new_index = i
-        break
-      endif
-    endfor
-    if new_index < 0
-      let new_index = min([max([old_index, 0]), len(a:state.files) - 1])
-    endif
+function! s:after_refresh_files(state, entry, keep_path, old_index) abort
+  if !s:state_alive(a:state)
+    return
+  endif
+  if empty(a:state.files)
+    let a:state.file_index = -1
+    call s:set_cursor(a:state.files_win, 1)
+    call s:show_side_message(a:state, [s:empty_message(a:entry)])
+    return
+  endif
 
-    let a:state.file_index = new_index
-    call s:goto_file_index(a:state, new_index)
-    call s:show_diff(a:state, a:state.files[new_index])
-  finally
-    let a:state.updating = 0
-  endtry
+  let new_index = -1
+  for i in range(len(a:state.files))
+    if a:state.files[i].path ==# a:keep_path
+      let new_index = i
+      break
+    endif
+  endfor
+  if new_index < 0
+    let new_index = min([max([a:old_index, 0]), len(a:state.files) - 1])
+  endif
+
+  let a:state.file_index = new_index
+  call s:goto_file_index(a:state, new_index)
+  call s:show_diff(a:state, a:state.files[new_index], a:entry)
 endfunction
 
 function! s:refresh_debounce_delay() abort
@@ -1025,72 +1185,71 @@ endfunction
 
 function! s:do_refresh_all(state) abort
   let state = a:state
-  if get(state, 'refreshing', 0) || !s:state_alive(state)
+  if !s:state_alive(state)
     return
   endif
 
   call s:flush_pending(state)
-  let state.refreshing = 1
-  let old_lazy = &lazyredraw
-  set lazyredraw
-  try
-    let keep_kind = ''
-    let keep_sha = ''
-    let keep_index = state.commit_index
-    if state.commit_index >= 0 && state.commit_index < len(state.commits)
-      let entry = state.commits[state.commit_index]
-      let keep_kind = entry.kind
-      let keep_sha = get(entry, 'sha', '')
-    endif
 
-    let keep_path = ''
-    if state.file_index >= 0 && state.file_index < len(state.files)
-      let keep_path = state.files[state.file_index].path
-    endif
+  let keep_kind = ''
+  let keep_sha = ''
+  let keep_index = state.commit_index
+  if state.commit_index >= 0 && state.commit_index < len(state.commits)
+    let entry = state.commits[state.commit_index]
+    let keep_kind = entry.kind
+    let keep_sha = get(entry, 'sha', '')
+  endif
 
-    let keep_branch = ''
-    if state.branch_index >= 0 && state.branch_index < len(state.branches)
-      let keep_branch = state.branches[state.branch_index].name
-    endif
+  let keep_path = ''
+  if state.file_index >= 0 && state.file_index < len(state.files)
+    let keep_path = state.files[state.file_index].path
+  endif
 
-    let state.updating = 1
-    try
-      call s:load_branches(state, keep_branch)
-      call s:load_commits(state, 'reload')
-    finally
-      let state.updating = 0
-    endtry
+  let keep_branch = ''
+  if state.branch_index >= 0 && state.branch_index < len(state.branches)
+    let keep_branch = state.branches[state.branch_index].name
+  endif
 
-    if empty(state.commits)
-      call s:show_no_commits(state)
-      return
-    endif
+  call s:load_branches(state, keep_branch)
+  call s:load_commits(state, 'reload',
+        \ function('s:after_refresh_all',
+        \   [state, keep_kind, keep_sha, keep_index, keep_path]))
+endfunction
 
-    let new_index = -1
-    for i in range(len(state.commits))
-      let candidate = state.commits[i]
-      if !empty(keep_sha)
-        if get(candidate, 'sha', '') ==# keep_sha
-          let new_index = i
-          break
-        endif
-      elseif candidate.kind ==# keep_kind
+function! s:after_refresh_all(state, keep_kind, keep_sha, keep_index, keep_path) abort
+  if !s:state_alive(a:state)
+    return
+  endif
+
+  if empty(a:state.commits)
+    call s:show_no_commits(a:state)
+    call s:set_status(a:state, 'Refreshed', 'info')
+    return
+  endif
+
+  let new_index = -1
+  for i in range(len(a:state.commits))
+    let candidate = a:state.commits[i]
+    if !empty(a:keep_sha)
+      if get(candidate, 'sha', '') ==# a:keep_sha
         let new_index = i
         break
       endif
-    endfor
-    if new_index < 0
-      let new_index = min([max([keep_index, 0]), len(state.commits) - 1])
+    elseif candidate.kind ==# a:keep_kind
+      let new_index = i
+      break
     endif
+  endfor
+  if new_index < 0
+    let new_index = min([max([a:keep_index, 0]), len(a:state.commits) - 1])
+  endif
 
-    let state.commit_index = new_index
-    call s:set_cursor(state.commits_win, state.commits_header + 1 + new_index)
-    call s:refresh_file_list(state, keep_path)
-  finally
-    let &lazyredraw = old_lazy
-    let state.refreshing = 0
-    call s:set_status(state, 'Refreshed', 'info')
-  endtry
+  let a:state.commit_index = new_index
+  call s:set_cursor(a:state.commits_win,
+        \ a:state.commits_header + 1 + new_index)
+  call s:refresh_file_list(a:state, a:keep_path)
+
+  call s:set_status(a:state, 'Refreshed', 'info')
 endfunction
 
 function! s:discard_current() abort
@@ -1482,13 +1641,14 @@ function! s:reword_commit(info, msgfile) abort
 endfunction
 
 function! s:reload_after_reword(state, sha) abort
-  let a:state.updating = 1
-  try
-    call s:load_commits(a:state, 'reload')
-  finally
-    let a:state.updating = 0
-  endtry
+  call s:load_commits(a:state, 'reload',
+        \ function('s:after_reword_reload', [a:state, a:sha]))
+endfunction
 
+function! s:after_reword_reload(state, sha) abort
+  if !s:state_alive(a:state)
+    return
+  endif
   let index = -1
   for i in range(len(a:state.commits))
     if get(a:state.commits[i], 'sha', '') ==# a:sha
@@ -1691,18 +1851,20 @@ function! s:reload_current_branch(state) abort
     call add(a:state.start_entries, s:worktree_entry())
   endif
 
-  let a:state.updating = 1
-  try
-    call s:load_branches(a:state, '')
-    call s:load_commits(a:state, 'reload')
-    if empty(a:state.commits)
-      call s:show_no_commits(a:state)
-    else
-      call s:select_commit(a:state, 0)
-    endif
-  finally
-    let a:state.updating = 0
-  endtry
+  call s:load_branches(a:state, '')
+  call s:load_commits(a:state, 'reload',
+        \ function('s:after_reload_current', [a:state]))
+endfunction
+
+function! s:after_reload_current(state) abort
+  if !s:state_alive(a:state)
+    return
+  endif
+  if empty(a:state.commits)
+    call s:show_no_commits(a:state)
+  else
+    call s:select_commit(a:state, 0)
+  endif
 endfunction
 
 function! s:upstream_ref(root) abort
@@ -1782,23 +1944,24 @@ function! s:refresh_after_push(state) abort
     let keep_path = a:state.files[a:state.file_index].path
   endif
 
-  let a:state.updating = 1
-  try
-    call s:load_commits(a:state, 'reload')
-  finally
-    let a:state.updating = 0
-  endtry
+  call s:load_commits(a:state, 'reload',
+        \ function('s:after_push_reload', [a:state, index, keep_path]))
+endfunction
 
+function! s:after_push_reload(state, index, keep_path) abort
+  if !s:state_alive(a:state)
+    return
+  endif
   if empty(a:state.commits)
     call s:show_no_commits(a:state)
     return
   endif
 
-  let index = min([max([index, 0]), len(a:state.commits) - 1])
+  let index = min([max([a:index, 0]), len(a:state.commits) - 1])
   let a:state.commit_index = index
   call s:set_cursor(a:state.commits_win,
         \ a:state.commits_header + 1 + index)
-  call s:refresh_file_list(a:state, keep_path)
+  call s:refresh_file_list(a:state, a:keep_path)
 endfunction
 
 function! s:push_current() abort
@@ -1975,18 +2138,30 @@ function! s:unstage_all() abort
 endfunction
 
 
-function! s:load_branches(state, select_name) abort
-  let current = s:git_one(a:state.root, 'symbolic-ref --short -q HEAD')
-  let names = s:git(a:state.root,
-        \ 'for-each-ref --sort=-committerdate '
-        \ . shellescape('--format=%(refname:short)')
-        \ . ' refs/heads')
+function! s:load_branches(state, select_name, ...) abort
+  let OnDone = a:0 ? a:1 : 0
+  let token = get(a:state, 'branch_req', 0) + 1
+  let a:state.branch_req = token
+  call s:git_job(a:state, 'branches', 'branch_req', token,
+        \ ['for-each-ref', '--sort=-committerdate',
+        \  '--format=%(HEAD)%09%(refname:short)', 'refs/heads'],
+        \ function('s:apply_branches', [a:state, a:select_name, OnDone]))
+endfunction
 
+function! s:apply_branches(state, select_name, on_done, result) abort
   let branches = []
-  for name in names
+  for line in a:result.out
+    let tab = stridx(line, "\t")
+    if tab < 0
+      continue
+    endif
+    let name = strpart(line, tab + 1)
+    if empty(name)
+      continue
+    endif
     call add(branches, {
           \ 'name': name,
-          \ 'current': name ==# current,
+          \ 'current': strpart(line, 0, tab) ==# '*',
           \ })
   endfor
 
@@ -2046,6 +2221,10 @@ function! s:load_branches(state, select_name) abort
           \ a:state.branch_header + 1 + selected)
   endif
   call s:update_statusline(a:state)
+
+  if type(a:on_done) == type(function('tr'))
+    call a:on_done()
+  endif
 endfunction
 
 function! s:selected_branch(state) abort
@@ -2056,34 +2235,36 @@ function! s:selected_branch(state) abort
 endfunction
 
 function! s:show_branch(state, branch) abort
-  let a:state.updating = 1
-  try
-    let a:state.log_ref = a:branch.name
-    let a:state.log_range = ''
-    let a:state.list_title = 'Branch: ' . a:branch.name
-    let a:state.has_head = !empty(s:resolve_ref(a:state.root, 'HEAD'))
-    let a:state.start_entries = []
+  let a:state.log_ref = a:branch.name
+  let a:state.log_range = ''
+  let a:state.list_title = 'Branch: ' . a:branch.name
+  let a:state.has_head = !empty(s:resolve_ref(a:state.root, 'HEAD'))
+  let a:state.start_entries = []
 
-    if a:branch.current
-          \ && a:state.has_head
-          \ && get(g:, 'git_changes_show_worktree', 1)
-      call add(a:state.start_entries, s:worktree_entry())
-    endif
+  if a:branch.current
+        \ && a:state.has_head
+        \ && get(g:, 'git_changes_show_worktree', 1)
+    call add(a:state.start_entries, s:worktree_entry())
+  endif
 
-    call s:load_commits(a:state)
-    if empty(a:state.commits)
-      call s:show_no_commits(a:state)
-    else
-      let target = 0
-      if a:state.commits[0].kind ==# 'worktree'
-            \ && len(a:state.commits) > 1
-        let target = 1
-      endif
-      call s:select_commit(a:state, target)
-    endif
-  finally
-    let a:state.updating = 0
-  endtry
+  call s:load_commits(a:state, 'initial',
+        \ function('s:after_show_branch', [a:state]))
+endfunction
+
+function! s:after_show_branch(state) abort
+  if !s:state_alive(a:state)
+    return
+  endif
+  if empty(a:state.commits)
+    call s:show_no_commits(a:state)
+    return
+  endif
+  let target = 0
+  if a:state.commits[0].kind ==# 'worktree'
+        \ && len(a:state.commits) > 1
+    let target = 1
+  endif
+  call s:select_commit(a:state, target)
 endfunction
 
 function! s:on_branch_cursor_moved() abort
@@ -2133,16 +2314,16 @@ function! s:checkout_branch() abort
     return
   endif
 
-  let state.updating = 1
-  try
-    call s:load_branches(state, branch.name)
-    if state.branch_index >= 0
-      call s:show_branch(state, state.branches[state.branch_index])
-    endif
-  finally
-    let state.updating = 0
-  endtry
+  call s:load_branches(state, branch.name,
+        \ function('s:after_checkout_branch', [state]))
   echomsg 'Switched to branch: ' . branch.name
+endfunction
+
+function! s:after_checkout_branch(state) abort
+  if !s:state_alive(a:state) || a:state.branch_index < 0
+    return
+  endif
+  call s:show_branch(a:state, a:state.branches[a:state.branch_index])
 endfunction
 
 function! s:copy_branch_name() abort
@@ -2185,15 +2366,8 @@ function! s:new_branch() abort
     return
   endif
 
-  let state.updating = 1
-  try
-    call s:load_branches(state, name)
-    if state.branch_index >= 0
-      call s:show_branch(state, state.branches[state.branch_index])
-    endif
-  finally
-    let state.updating = 0
-  endtry
+  call s:load_branches(state, name,
+        \ function('s:after_checkout_branch', [state]))
   echomsg 'Created branch: ' . name
 endfunction
 
@@ -2222,15 +2396,7 @@ function! s:delete_branch() abort
     return
   endif
 
-  let state.updating = 1
-  try
-    call s:load_branches(state, '')
-    if state.branch_index >= 0
-      call s:show_branch(state, state.branches[state.branch_index])
-    endif
-  finally
-    let state.updating = 0
-  endtry
+  call s:load_branches(state, '')
   echomsg 'Deleted branch: ' . branch.name
 endfunction
 
@@ -2360,27 +2526,7 @@ function! s:worktree_summary(files) abort
 endfunction
 
 function! s:commit_body_lines(state, entry) abort
-  if has_key(a:entry, 'body_lines')
-    return a:entry.body_lines
-  endif
-
-  let lines = s:git(a:state.root,
-        \ 'show -s --format=%b ' . shellescape(a:entry.sha))
-  while !empty(lines) && empty(lines[0])
-    call remove(lines, 0)
-  endwhile
-  while !empty(lines) && empty(lines[-1])
-    call remove(lines, -1)
-  endwhile
-
-  let limit = s:opt_int('git_changes_commit_body_lines', 20)
-  if len(lines) > limit
-    let lines = lines[0:limit - 1]
-    call add(lines, '...')
-  endif
-
-  let a:entry.body_lines = lines
-  return lines
+  return get(a:entry, 'body_lines', [])
 endfunction
 
 function! s:files_header_lines(state, entry) abort
@@ -2519,6 +2665,7 @@ endfunction
 
 function! s:render_files(state, entry, files) abort
   let a:state.files = a:files
+  let a:state.files_entry = s:entry_key(a:entry)
   let header_lines = s:files_header_lines(a:state, a:entry) + ['']
   let a:state.files_header = len(header_lines)
 
@@ -2582,6 +2729,17 @@ function! s:current_file_index(state) abort
       return -1
     endif
     return a:state.file_line_map[offset]
+  elseif get(b:, 'gc_kind', '') ==# 'diff'
+    let shown = get(a:state, 'shown_file', {})
+    if empty(shown)
+      return -1
+    endif
+    for i in range(len(a:state.files))
+      if a:state.files[i].path ==# shown.path
+        return i
+      endif
+    endfor
+    return -1
   endif
   return a:state.file_index
 endfunction
@@ -2596,31 +2754,6 @@ function! s:read_worktree(root, path) abort
   catch
     return []
   endtry
-endfunction
-
-" Return the commits in the current view that are not on any remote.
-function! s:unpushed_shas(state) abort
-  if empty(s:git(a:state.root, 'remote'))
-    return {}
-  endif
-
-  let args = 'rev-list'
-  if !empty(a:state.log_range)
-    let args .= ' ' . a:state.log_range
-  elseif !empty(a:state.log_ref)
-    let args .= ' ' . shellescape(a:state.log_ref)
-  elseif a:state.has_head
-    let args .= ' HEAD'
-  else
-    return {}
-  endif
-  let args .= ' --not --remotes'
-
-  let unpushed = {}
-  for sha in s:git(a:state.root, args)
-    let unpushed[sha] = 1
-  endfor
-  return unpushed
 endfunction
 
 function! s:render_commits(state) abort
@@ -2654,6 +2787,7 @@ endfunction
 " loaded, 'append' fetches the next page after the loaded commits.
 function! s:load_commits(state, ...) abort
   let mode = a:0 ? a:1 : 'initial'
+  let OnDone = a:0 > 1 ? a:2 : 0
   let page = s:opt_int('git_changes_max_commits', 200)
   let loaded = get(a:state, 'commit_loaded', 0)
   if mode ==# 'append'
@@ -2667,27 +2801,37 @@ function! s:load_commits(state, ...) abort
     let want = page
   endif
 
-  let skip_merges = get(g:, 'git_changes_exclude_merges', 1)
-  let no_merges = skip_merges ? '--no-merges ' : ''
-  let sep = nr2char(31)
-  let format = '--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%ad'
-  let args = 'log ' . no_merges . '--date=short --skip=' . skip
-        \ . ' --max-count=' . (want + 1) . ' ' . format
-  if !empty(a:state.log_range)
-    let args .= ' ' . a:state.log_range
-  elseif !empty(a:state.log_ref)
-    let args .= ' ' . shellescape(a:state.log_ref)
-  endif
+  let token = get(a:state, 'commit_req', 0) + 1
+  let a:state.commit_req = token
+
   if !a:state.has_head && empty(a:state.log_range) && empty(a:state.log_ref)
-    let out = []
-  else
-    let out = s:git(a:state.root, args)
+    call s:apply_commits(a:state, mode, want, OnDone,
+          \ {'out': [], 'err': [], 'status': 0})
+    return
   endif
 
-  let unpushed = s:unpushed_shas(a:state)
+  let args = ['log']
+  if get(g:, 'git_changes_exclude_merges', 1)
+    call add(args, '--no-merges')
+  endif
+  call extend(args, ['--date=short', '--skip=' . skip,
+        \ '--max-count=' . (want + 1),
+        \ '--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%ad'])
+  if !empty(a:state.log_range)
+    call add(args, a:state.log_range)
+  elseif !empty(a:state.log_ref)
+    call add(args, a:state.log_ref)
+  endif
+
+  call s:git_job(a:state, 'commits-log', 'commit_req', token, args,
+        \ function('s:apply_commits', [a:state, mode, want, OnDone]))
+endfunction
+
+function! s:apply_commits(state, mode, want, on_done, result) abort
+  let loaded = get(a:state, 'commit_loaded', 0)
   let real_commits = []
-  for line in out
-    let parts = split(line, sep)
+  for line in a:result.out
+    let parts = split(line, nr2char(31))
     if len(parts) >= 3
       call add(real_commits, {
             \ 'kind': 'commit',
@@ -2696,17 +2840,17 @@ function! s:load_commits(state, ...) abort
             \ 'subject': parts[2],
             \ 'author': get(parts, 3, ''),
             \ 'date': get(parts, 4, ''),
-            \ 'unpushed': has_key(unpushed, parts[0]),
+            \ 'unpushed': 0,
             \ })
     endif
   endfor
 
-  let has_more = len(real_commits) > want
+  let has_more = len(real_commits) > a:want
   if has_more
-    let real_commits = real_commits[0 : want - 1]
+    let real_commits = real_commits[0 : a:want - 1]
   endif
 
-  if mode ==# 'append'
+  if a:mode ==# 'append'
     call extend(a:state.commits, real_commits)
     let a:state.commit_loaded = loaded + len(real_commits)
   else
@@ -2718,8 +2862,85 @@ function! s:load_commits(state, ...) abort
   let a:state.commit_has_more = has_more
 
   call s:render_commits(a:state)
-  if mode !=# 'append' && !empty(a:state.commits)
+  if a:mode !=# 'append' && !empty(a:state.commits)
     call s:set_cursor(a:state.commits_win, a:state.commits_header + 1)
+  endif
+
+  call s:load_unpushed(a:state, get(a:state, 'commit_req', 0))
+
+  if type(a:on_done) == type(function('tr'))
+    call a:on_done()
+  endif
+endfunction
+
+function! s:load_unpushed(state, token) abort
+  if a:token != get(a:state, 'commit_req', 0)
+    return
+  endif
+  call s:job_stop(a:state, 'commits-unpushed')
+  call s:git_job(a:state, 'commits-remote', 'commit_req', a:token, ['remote'],
+        \ function('s:apply_unpushed_remote', [a:state, a:token]))
+endfunction
+
+function! s:apply_unpushed_remote(state, token, result) abort
+  if a:token != get(a:state, 'commit_req', 0)
+    return
+  endif
+
+  let args = ['rev-list']
+  if !empty(a:state.log_range)
+    call add(args, a:state.log_range)
+  elseif !empty(a:state.log_ref)
+    call add(args, a:state.log_ref)
+  elseif a:state.has_head
+    call add(args, 'HEAD')
+  else
+    return
+  endif
+
+  if empty(a:result.out)
+    " No remotes: nothing is considered unpushed.
+    let changed = 0
+    for entry in a:state.commits
+      if get(entry, 'unpushed', 0)
+        let entry.unpushed = 0
+        let changed = 1
+      endif
+    endfor
+    if changed
+      call s:render_commits(a:state)
+    endif
+    return
+  endif
+
+  call extend(args, ['--not', '--remotes'])
+  call s:git_job(a:state, 'commits-unpushed', 'commit_req', a:token, args,
+        \ function('s:apply_unpushed_list', [a:state, a:token]))
+endfunction
+
+function! s:apply_unpushed_list(state, token, result) abort
+  if a:token != get(a:state, 'commit_req', 0)
+    return
+  endif
+
+  let shas = {}
+  for sha in a:result.out
+    let shas[sha] = 1
+  endfor
+
+  let changed = 0
+  for entry in a:state.commits
+    if get(entry, 'kind', '') !=# 'commit'
+      continue
+    endif
+    let unpushed = has_key(shas, entry.sha)
+    if get(entry, 'unpushed', 0) != unpushed
+      let entry.unpushed = unpushed
+      let changed = 1
+    endif
+  endfor
+  if changed
+    call s:render_commits(a:state)
   endif
 endfunction
 
@@ -2734,49 +2955,90 @@ function! s:load_more_commits() abort
   endif
 
   let before = get(state, 'commit_loaded', 0)
-  let state.updating = 1
-  try
-    call s:load_commits(state, 'append')
-  catch
-    call s:err(v:exception)
-  finally
-    let state.updating = 0
-  endtry
-  let added = get(state, 'commit_loaded', 0) - before
+  call s:load_commits(state, 'append',
+        \ function('s:after_load_more', [state, before]))
+endfunction
+
+function! s:after_load_more(state, before) abort
+  if !s:state_alive(a:state)
+    return
+  endif
+  let added = get(a:state, 'commit_loaded', 0) - a:before
   if added > 0
     echomsg printf('GitChanges: loaded %d more commits (%d total)',
-          \ added, state.commit_loaded)
+          \ added, a:state.commit_loaded)
   endif
 endfunction
 
-function! s:load_files(state, entry) abort
+function! s:load_files(state, entry, ...) abort
+  let OnDone = a:0 ? a:1 : 0
+  let token = get(a:state, 'files_req', 0) + 1
+  let a:state.files_req = token
+  " Results for the previous file list / diff are no longer interesting.
+  let a:state.diff_req = get(a:state, 'diff_req', 0) + 1
+  call s:job_stop(a:state, 'diff-check')
+  call s:job_stop(a:state, 'diff-old')
+  call s:job_stop(a:state, 'diff-new')
+  call s:job_stop(a:state, 'files-body')
+
+  " The commit body is shown in the files header; fetch it in the background
+  " before rendering when it is not cached yet.
+  if a:entry.kind ==# 'commit' && !has_key(a:entry, 'body_lines')
+    call s:git_job(a:state, 'files-body', 'files_req', token,
+          \ ['show', '-s', '--format=%b', a:entry.sha],
+          \ function('s:after_body_prefetch',
+          \   [a:state, a:entry, OnDone, token]))
+    return
+  endif
+
+  call s:start_files_job(a:state, a:entry, OnDone, token)
+endfunction
+
+function! s:after_body_prefetch(state, entry, OnDone, token, result) abort
+  if a:token != get(a:state, 'files_req', 0)
+    return
+  endif
+  let lines = copy(a:result.out)
+  while !empty(lines) && empty(lines[0])
+    call remove(lines, 0)
+  endwhile
+  while !empty(lines) && empty(lines[-1])
+    call remove(lines, -1)
+  endwhile
+  let limit = s:opt_int('git_changes_commit_body_lines', 20)
+  if len(lines) > limit
+    let lines = lines[0 : limit - 1]
+    call add(lines, '...')
+  endif
+  let a:entry.body_lines = lines
+  call s:start_files_job(a:state, a:entry, a:OnDone, a:token)
+endfunction
+
+function! s:start_files_job(state, entry, OnDone, token) abort
   if a:entry.kind ==# 'worktree'
-    call s:load_worktree_files(a:state, a:entry)
+    let args = ['status', '--porcelain=v1', '--untracked-files=all', '-M']
   elseif a:entry.kind ==# 'compare'
-    call s:load_compare_files(a:state, a:entry)
+    let args = ['diff', '--name-status', '-M', '--no-ext-diff',
+          \ a:entry.old_ref, a:entry.new_ref]
   else
-    call s:load_commit_files(a:state, a:entry)
+    let args = ['show', '--name-status', '--format=', '--no-color',
+          \ '--no-ext-diff', '--find-renames', a:entry.sha]
   endif
+
+  call s:git_job(a:state, 'files', 'files_req', a:token, args,
+        \ function('s:apply_files', [a:state, a:entry, a:OnDone]))
 endfunction
 
-function! s:load_commit_files(state, commit) abort
-  let out = s:git(a:state.root,
-        \ 'show --name-status --format= --no-color --no-ext-diff --find-renames '
-        \ . shellescape(a:commit.sha))
-  call s:render_files(a:state, a:commit, s:parse_status_lines(out))
-endfunction
-
-function! s:load_compare_files(state, entry) abort
-  let out = s:git(a:state.root,
-        \ 'diff --name-status -M --no-ext-diff '
-        \ . shellescape(a:entry.old_ref) . ' ' . shellescape(a:entry.new_ref))
-  call s:render_files(a:state, a:entry, s:parse_status_lines(out))
-endfunction
-
-function! s:load_worktree_files(state, entry) abort
-  let out = s:git(a:state.root,
-        \ 'status --porcelain=v1 --untracked-files=all -M')
-  call s:render_files(a:state, a:entry, s:parse_worktree_status(out))
+function! s:apply_files(state, entry, on_done, result) abort
+  if a:entry.kind ==# 'worktree'
+    let files = s:parse_worktree_status(a:result.out)
+  else
+    let files = s:parse_status_lines(a:result.out)
+  endif
+  call s:render_files(a:state, a:entry, files)
+  if type(a:on_done) == type(function('tr'))
+    call a:on_done()
+  endif
 endfunction
 
 function! s:side_win(state, side) abort
@@ -2887,6 +3149,7 @@ function! s:sync_diff(state) abort
 endfunction
 
 function! s:show_side_message(state, lines) abort
+  let a:state.shown_file = {}
   let need_diff = s:side_needs_update(a:state, 'old', '', a:lines)
         \ || s:side_needs_update(a:state, 'new', '', a:lines)
   if need_diff
@@ -2902,17 +3165,6 @@ function! s:show_side_message(state, lines) abort
   endif
 endfunction
 
-function! s:is_binary(state, args, paths) abort
-  let path_args = join(map(copy(a:paths), 'shellescape(v:val)'), ' ')
-  let out = s:git(a:state.root, a:args . ' -- ' . path_args)
-  for line in out
-    if line =~# '^-\t-\t'
-      return 1
-    endif
-  endfor
-  return 0
-endfunction
-
 function! s:file_paths(file) abort
   let old_path = empty(get(a:file, 'oldpath', '')) ? a:file.path : a:file.oldpath
   let new_path = a:file.path
@@ -2921,67 +3173,6 @@ function! s:file_paths(file) abort
     call add(paths, new_path)
   endif
   return [old_path, new_path, paths]
-endfunction
-
-function! s:show_commit_diff(state, commit, file) abort
-  let [old_path, new_path, paths] = s:file_paths(a:file)
-
-  if s:is_binary(a:state,
-        \ 'show --numstat --format= ' . shellescape(a:commit.sha), paths)
-    call s:show_side_message(a:state,
-          \ ['(binary file - no side-by-side diff)'])
-    return
-  endif
-
-  let old_lines = s:git(a:state.root,
-        \ 'show ' . shellescape(a:commit.sha . '^:' . old_path))
-  let new_lines = s:git(a:state.root,
-        \ 'show ' . shellescape(a:commit.sha . ':' . new_path))
-
-  let need_diff = s:side_needs_update(a:state, 'old', old_path, old_lines)
-        \ || s:side_needs_update(a:state, 'new', new_path, new_lines)
-  if need_diff
-    call s:diff_off(a:state)
-  endif
-  call s:load_side_buffer(a:state, 'old', old_path, old_lines, 1,
-        \ 'PARENT ' . old_path)
-  call s:load_side_buffer(a:state, 'new', new_path, new_lines, 1,
-        \ a:commit.short . ' ' . new_path)
-  if need_diff
-    call s:diff_on(a:state)
-    call s:sync_diff(a:state)
-  endif
-endfunction
-
-function! s:show_compare_diff(state, entry, file) abort
-  let [old_path, new_path, paths] = s:file_paths(a:file)
-
-  if s:is_binary(a:state,
-        \ 'diff --numstat ' . shellescape(a:entry.old_ref) . ' '
-        \ . shellescape(a:entry.new_ref), paths)
-    call s:show_side_message(a:state,
-          \ ['(binary file - no side-by-side diff)'])
-    return
-  endif
-
-  let old_lines = s:git(a:state.root,
-        \ 'show ' . shellescape(a:entry.old_ref . ':' . old_path))
-  let new_lines = s:git(a:state.root,
-        \ 'show ' . shellescape(a:entry.new_ref . ':' . new_path))
-
-  let need_diff = s:side_needs_update(a:state, 'old', old_path, old_lines)
-        \ || s:side_needs_update(a:state, 'new', new_path, new_lines)
-  if need_diff
-    call s:diff_off(a:state)
-  endif
-  call s:load_side_buffer(a:state, 'old', old_path, old_lines, 1,
-        \ a:entry.old_label . ' ' . old_path)
-  call s:load_side_buffer(a:state, 'new', new_path, new_lines, 1,
-        \ a:entry.new_label . ' ' . new_path)
-  if need_diff
-    call s:diff_on(a:state)
-    call s:sync_diff(a:state)
-  endif
 endfunction
 
 function! s:worktree_file_is_binary(root, path) abort
@@ -3002,54 +3193,140 @@ function! s:worktree_file_is_binary(root, path) abort
   return 0
 endfunction
 
-function! s:show_worktree_diff(state, file) abort
+function! s:show_diff(state, file, ...) abort
+  if a:state.commit_index < 0 || a:state.commit_index >= len(a:state.commits)
+    return
+  endif
+  let entry = a:0 ? a:1 : a:state.commits[a:state.commit_index]
   let [old_path, new_path, paths] = s:file_paths(a:file)
 
-  let binary = s:is_binary(a:state, 'diff --numstat HEAD', paths)
-  if !binary && a:file.status !=# 'D'
-    let binary = s:worktree_file_is_binary(a:state.root, new_path)
+  let token = get(a:state, 'diff_req', 0) + 1
+  let a:state.diff_req = token
+  call s:job_stop(a:state, 'diff-check')
+  call s:job_stop(a:state, 'diff-old')
+  call s:job_stop(a:state, 'diff-new')
+  let ctx = {
+        \ 'file': a:file,
+        \ 'entry': entry,
+        \ 'old_path': old_path,
+        \ 'new_path': new_path,
+        \ 'old': [],
+        \ 'new': [],
+        \ 'pending': 0,
+        \ 'token': token,
+        \ }
+
+  if entry.kind ==# 'worktree'
+    let ctx.old_label = 'HEAD ' . old_path
+    let ctx.new_label = 'WORKTREE ' . new_path
+    let args = ['diff', '--numstat', 'HEAD', '--'] + paths
+  elseif entry.kind ==# 'compare'
+    let ctx.old_label = entry.old_label . ' ' . old_path
+    let ctx.new_label = entry.new_label . ' ' . new_path
+    let args = ['diff', '--numstat', entry.old_ref, entry.new_ref, '--'] + paths
+  else
+    let ctx.old_label = 'PARENT ' . old_path
+    let ctx.new_label = entry.short . ' ' . new_path
+    let args = ['show', '--numstat', '--format=', entry.sha, '--'] + paths
   endif
-  if binary
+
+  call s:git_job(a:state, 'diff-check', 'diff_req', token, args,
+        \ function('s:on_diff_check', [a:state, ctx]))
+endfunction
+
+function! s:diff_is_stale(state, ctx) abort
+  return a:ctx.token != get(a:state, 'diff_req', 0)
+endfunction
+
+function! s:on_diff_check(state, ctx, result) abort
+  if s:diff_is_stale(a:state, a:ctx)
+    return
+  endif
+
+  for line in a:result.out
+    if line =~# '^-\t-\t'
+      call s:show_side_message(a:state,
+            \ ['(binary file - no side-by-side diff)'])
+      return
+    endif
+  endfor
+
+  if a:ctx.entry.kind ==# 'worktree'
+        \ && a:ctx.file.status !=# 'D'
+        \ && s:worktree_file_is_binary(a:state.root, a:ctx.new_path)
     call s:show_side_message(a:state,
           \ ['(binary file - no side-by-side diff)'])
     return
   endif
 
-  let old_lines = s:git(a:state.root,
-        \ 'show ' . shellescape('HEAD:' . old_path))
-  let new_lines = s:read_worktree(a:state.root, new_path)
-
-  let need_diff = s:side_needs_update(a:state, 'old', old_path, old_lines)
-        \ || s:side_needs_update(a:state, 'new', new_path, new_lines)
-  if need_diff
-    call s:diff_off(a:state)
+  if a:ctx.entry.kind ==# 'worktree'
+    " The working tree file is local, read it directly.
+    let a:ctx.new = s:read_worktree(a:state.root, a:ctx.new_path)
+    call s:git_job(a:state, 'diff-old', 'diff_req', a:ctx.token,
+          \ ['show', 'HEAD:' . a:ctx.old_path],
+          \ function('s:on_diff_old', [a:state, a:ctx]))
+    return
   endif
-  call s:load_side_buffer(a:state, 'old', old_path, old_lines, 1,
-        \ 'HEAD ' . old_path)
-  call s:load_side_buffer(a:state, 'new', new_path, new_lines, 1,
-        \ 'WORKTREE ' . new_path)
-  if need_diff
-    call s:diff_on(a:state)
-    call s:sync_diff(a:state)
+
+  if a:ctx.entry.kind ==# 'compare'
+    let old_args = ['show', a:ctx.entry.old_ref . ':' . a:ctx.old_path]
+    let new_args = ['show', a:ctx.entry.new_ref . ':' . a:ctx.new_path]
+  else
+    let old_args = ['show', a:ctx.entry.sha . '^:' . a:ctx.old_path]
+    let new_args = ['show', a:ctx.entry.sha . ':' . a:ctx.new_path]
+  endif
+
+  let a:ctx.pending = 2
+  call s:git_job(a:state, 'diff-old', 'diff_req', a:ctx.token, old_args,
+        \ function('s:on_diff_part', [a:state, a:ctx, 'old']))
+  call s:git_job(a:state, 'diff-new', 'diff_req', a:ctx.token, new_args,
+        \ function('s:on_diff_part', [a:state, a:ctx, 'new']))
+endfunction
+
+function! s:on_diff_old(state, ctx, result) abort
+  if s:diff_is_stale(a:state, a:ctx)
+    return
+  endif
+  let a:ctx.old = a:result.out
+  call s:apply_diff(a:state, a:ctx)
+endfunction
+
+function! s:on_diff_part(state, ctx, side, result) abort
+  if s:diff_is_stale(a:state, a:ctx)
+    return
+  endif
+  let a:ctx[a:side] = a:result.out
+  let a:ctx.pending -= 1
+  if a:ctx.pending <= 0
+    call s:apply_diff(a:state, a:ctx)
   endif
 endfunction
 
-function! s:show_diff(state, file) abort
-  if a:state.commit_index < 0 || a:state.commit_index >= len(a:state.commits)
+function! s:apply_diff(state, ctx) abort
+  if s:diff_is_stale(a:state, a:ctx)
     return
   endif
-  let entry = a:state.commits[a:state.commit_index]
+
+  let old_lines = a:ctx.old
+  let new_lines = a:ctx.new
+  let need_diff = s:side_needs_update(a:state, 'old', a:ctx.old_path, old_lines)
+        \ || s:side_needs_update(a:state, 'new', a:ctx.new_path, new_lines)
 
   let old_lazy = &lazyredraw
   set lazyredraw
   try
-    if entry.kind ==# 'worktree'
-      call s:show_worktree_diff(a:state, a:file)
-    elseif entry.kind ==# 'compare'
-      call s:show_compare_diff(a:state, entry, a:file)
-    else
-      call s:show_commit_diff(a:state, entry, a:file)
+    if need_diff
+      call s:diff_off(a:state)
     endif
+    call s:load_side_buffer(a:state, 'old', a:ctx.old_path, old_lines, 1,
+          \ a:ctx.old_label)
+    call s:load_side_buffer(a:state, 'new', a:ctx.new_path, new_lines, 1,
+          \ a:ctx.new_label)
+    if need_diff
+      call s:diff_on(a:state)
+      call s:sync_diff(a:state)
+    endif
+    let a:state.shown_file = a:ctx.file
   finally
     let &lazyredraw = old_lazy
   endtry
@@ -3061,36 +3338,42 @@ function! s:select_commit(state, index) abort
   endif
 
   call s:cancel_pending(a:state)
-  let old_lazy = &lazyredraw
-  set lazyredraw
-  let a:state.updating = 1
-  try
-    let a:state.commit_index = a:index
-    call s:set_cursor(a:state.commits_win,
-          \ a:state.commits_header + 1 + a:index)
-    let entry = a:state.commits[a:index]
-    call s:load_files(a:state, entry)
+  let a:state.commit_index = a:index
+  call s:clear_files_state(a:state)
+  call s:set_cursor(a:state.commits_win,
+        \ a:state.commits_header + 1 + a:index)
+  let entry = a:state.commits[a:index]
+  call s:load_files(a:state, entry,
+        \ function('s:after_select_files', [a:state, entry]))
+endfunction
 
-    if empty(a:state.files)
-      let a:state.file_index = -1
-      call s:set_cursor(a:state.files_win, 1)
-      call s:show_side_message(a:state, [s:empty_message(entry)])
-    else
-      let a:state.file_index = 0
-      call s:goto_file_index(a:state, 0)
-      call s:show_diff(a:state, a:state.files[0])
-    endif
-  catch
-    call s:err(v:exception)
-  finally
-    let a:state.updating = 0
-    let &lazyredraw = old_lazy
-  endtry
+function! s:after_select_files(state, entry) abort
+  if !s:state_alive(a:state)
+    return
+  endif
+  if empty(a:state.files)
+    let a:state.file_index = -1
+    call s:set_cursor(a:state.files_win, 1)
+    call s:show_side_message(a:state, [s:empty_message(a:entry)])
+  else
+    let a:state.file_index = 0
+    call s:goto_file_index(a:state, 0)
+    call s:show_diff(a:state, a:state.files[0], a:entry)
+  endif
 endfunction
 
 function! s:show_no_commits(state) abort
   let a:state.commit_index = -1
   let a:state.file_index = -1
+  let a:state.files_entry = ''
+  let a:state.shown_file = {}
+  let a:state.files_req = get(a:state, 'files_req', 0) + 1
+  let a:state.diff_req = get(a:state, 'diff_req', 0) + 1
+  call s:job_stop(a:state, 'files')
+  call s:job_stop(a:state, 'files-body')
+  call s:job_stop(a:state, 'diff-check')
+  call s:job_stop(a:state, 'diff-old')
+  call s:job_stop(a:state, 'diff-new')
   call s:set_lines(a:state.commits_buf,
         \ ['# ' . a:state.list_title, '   (no commits)'])
 
@@ -3245,6 +3528,8 @@ function! s:open_tab(root, parsed, tabnr) abort
         \ 'commit_loaded': 0,
         \ 'commit_has_more': 0,
         \ 'files': [],
+        \ 'files_entry': '',
+        \ 'shown_file': {},
         \ 'commit_index': -1,
         \ 'file_index': -1,
         \ 'commits_header': 1,
@@ -3362,21 +3647,29 @@ function! s:open_tab(root, parsed, tabnr) abort
   silent! execute 'resize ' . branch_height
 
   call s:load_branches(state, '')
-  call s:load_commits(state)
-  if empty(state.commits)
-    call s:show_no_commits(state)
-  else
-    call s:select_commit(state, 0)
-  endif
+  call s:load_commits(state, 'initial',
+        \ function('s:after_initial_commits', [state]))
 
   let state.updating = 0
   call win_gotoid(state.files_win)
+endfunction
+
+function! s:after_initial_commits(state) abort
+  if !s:state_alive(a:state)
+    return
+  endif
+  if empty(a:state.commits)
+    call s:show_no_commits(a:state)
+  else
+    call s:select_commit(a:state, 0)
+  endif
 endfunction
 
 function! s:quit_state(state) abort
   let state = a:state
   call s:cancel_pending(state)
   call s:cancel_refresh(state)
+  call s:cancel_jobs(state)
   let wins = win_findbuf(state.files_buf)
   if empty(wins)
     let wins = win_findbuf(state.commits_buf)
