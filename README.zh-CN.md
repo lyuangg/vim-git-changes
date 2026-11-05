@@ -76,9 +76,6 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 
 ### Git 命令
 
-不需要进入 GitChanges 窗口，在任意 buffer 里都能执行；如果当前仓库已经打开了
-GitChanges 窗口，执行后也会同步刷新。
-
 ```vim
 " stage / unstage / discard 当前文件，也可以带路径
 :GitChangesStage
@@ -105,11 +102,6 @@ GitChanges 窗口，执行后也会同步刷新。
 " 在当前文件左侧打开 git blame 窗口
 :GitChangesBlame
 ```
-
-blame 窗口默认显示短 hash、时间（精确到分钟）、作者和 commit message，不显示邮箱；
-每一项都可以通过 `g:git_changes_blame_*` 配置开关，并用不同颜色区分。窗口会与文件
-同步滚动、同步光标，在 blame 窗口中按 `q` 关闭。宽度默认 50 列，可用
-`g:git_changes_blame_width` 配置。
 
 ### 单文件 diff
 
@@ -217,15 +209,8 @@ let g:git_changes_fold = 1
 " 左侧栏宽度
 let g:git_changes_width = 40
 
-" blame 窗口字段开关（1 = 显示，0 = 隐藏）
-let g:git_changes_blame_hash = 1
-let g:git_changes_blame_time = 1
-let g:git_changes_blame_author = 1
-let g:git_changes_blame_email = 0
-let g:git_changes_blame_message = 1
-
 " blame 窗口宽度
-let g:git_changes_blame_width = 50
+let g:git_changes_blame_width = 40
 
 " commit 列表高度上限
 let g:git_changes_commits_height = 12

@@ -79,9 +79,6 @@ toggle one fold, or set `g:git_changes_fold = 0` to keep everything expanded.
 
 ### Git commands
 
-These run from any buffer without opening the GitChanges tab. If a GitChanges
-tab is open for the repository, it is refreshed as well.
-
 ```vim
 " Stage, unstage, or discard the current file (or an optional path)
 :GitChangesStage
@@ -108,12 +105,6 @@ tab is open for the repository, it is refreshed as well.
 " Show git blame for the current file in a window on the left
 :GitChangesBlame
 ```
-
-The blame pane shows the short hash, time (to the minute), author, and commit
-summary; email is hidden by default. Every field can be toggled with the
-`g:git_changes_blame_*` options, and each field is highlighted with a different
-color. It scrolls and moves together with the file. Press `q` in the pane to
-close it. The width defaults to 50 columns.
 
 ### File diff
 
@@ -235,15 +226,8 @@ let g:git_changes_fold = 1
 " Left pane width
 let g:git_changes_width = 40
 
-" Blame pane fields (1 = show, 0 = hide)
-let g:git_changes_blame_hash = 1
-let g:git_changes_blame_time = 1
-let g:git_changes_blame_author = 1
-let g:git_changes_blame_email = 0
-let g:git_changes_blame_message = 1
-
 " Blame pane width
-let g:git_changes_blame_width = 50
+let g:git_changes_blame_width = 40
 
 " Commit list height limit
 let g:git_changes_commits_height = 12
