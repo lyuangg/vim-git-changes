@@ -5112,7 +5112,7 @@ function! s:init_blame_highlights() abort
   highlight def link GitChangesBlameTime Comment
   highlight def link GitChangesBlameAuthor Function
   highlight def link GitChangesBlameEmail Special
-  highlight def link GitChangesBlameMessage String
+  highlight def link GitChangesBlameMessage Comment
   highlight def link GitChangesBlameUncommitted WarningMsg
 endfunction
 
