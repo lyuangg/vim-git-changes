@@ -397,6 +397,32 @@ function! s:find_state() abort
   return {}
 endfunction
 
+" Find a live GitChanges view for {root}, so the command can reuse its tab
+" instead of opening another one.
+function! s:find_state_for_root(root) abort
+  for state in reverse(copy(s:instances))
+    if s:state_alive(state) && get(state, 'root', '') ==# a:root
+      return state
+    endif
+  endfor
+  return {}
+endfunction
+
+" Tab holding {state}. Computed from its windows because state.tab goes stale
+" when other tabs are opened or closed.
+function! s:state_tab(state) abort
+  for key in ['files_buf', 'commits_buf', 'branches_buf', 'old_buf', 'new_buf']
+    let buf = get(a:state, key, -1)
+    if buf > 0 && bufexists(buf)
+      let wins = win_findbuf(buf)
+      if !empty(wins)
+        return win_id2tabwin(wins[0])[0]
+      endif
+    endif
+  endfor
+  return 0
+endfunction
+
 function! s:forget(state) abort
   call filter(s:instances, 'v:val isnot a:state')
 endfunction
@@ -1373,6 +1399,42 @@ function! s:copy_to_clipboard(text) abort
   return 0
 endfunction
 
+" Find a normal (non-plugin) window showing {path}, so opening a file can
+" reuse its tab instead of always creating a new one.
+function! s:find_file_window(path) abort
+  let target = fnamemodify(a:path, ':p')
+  for info in getwininfo()
+    let buf = info.bufnr
+    if !empty(getbufvar(buf, 'gc_kind', ''))
+          \ || !empty(getbufvar(buf, '&buftype'))
+      continue
+    endif
+    let name = bufname(buf)
+    if !empty(name) && fnamemodify(name, ':p') ==# target
+      return info.winid
+    endif
+  endfor
+  return 0
+endfunction
+
+function! s:show_file(path, lnum) abort
+  let winid = s:find_file_window(a:path)
+  if winid > 0
+    let tabwin = win_id2tabwin(winid)
+    if !empty(tabwin) && tabwin[0] > 0 && tabwin[0] != tabpagenr()
+      execute 'tabnext ' . tabwin[0]
+    endif
+    call win_gotoid(winid)
+  else
+    execute 'tabnew ' . fnameescape(a:path)
+  endif
+
+  if a:lnum > 0
+    call cursor(a:lnum, 1)
+    normal! zz
+  endif
+endfunction
+
 function! s:open_file() abort
   let state = s:cur_state()
   if empty(state) || empty(state.commits) || state.commit_index < 0
@@ -1399,11 +1461,7 @@ function! s:open_file() abort
     let lnum = line('.')
   endif
 
-  execute 'tabnew ' . fnameescape(path)
-  if lnum > 0
-    call cursor(lnum, 1)
-    normal! zz
-  endif
+  call s:show_file(path, lnum)
 endfunction
 
 function! s:copy_file_path() abort
@@ -3528,6 +3586,14 @@ function! git_changes#open(...) abort
   if !empty(state)
     let tabnr = tabpagenr()
     call s:quit_state(state)
+  else
+    " Reuse an existing view for this repository instead of opening another
+    " tab every time the command runs.
+    let existing = s:find_state_for_root(root)
+    if !empty(existing)
+      let tabnr = s:state_tab(existing)
+      call s:quit_state(existing)
+    endif
   endif
 
   call s:open_tab(root, parsed, tabnr)
@@ -4163,14 +4229,26 @@ function! s:diff_open(raw, defaults) abort
     return
   endif
 
-  call s:open_sxs_diff(root, spec)
+  " Reuse the existing diff tab for this repository instead of opening a new
+  " one on every invocation.
+  let tabnr = 0
+  let existing = s:find_file_diff_state(root)
+  if !empty(existing)
+    let tabnr = s:close_file_diff(existing)
+  endif
+
+  call s:open_sxs_diff(root, spec, tabnr)
 endfunction
 
-function! s:open_sxs_diff(root, spec) abort
+function! s:open_sxs_diff(root, spec, ...) abort
+  let tabnr = a:0 ? a:1 : 0
   let id = s:file_diff_next_id + 1
   let s:file_diff_next_id = id
 
   tabnew
+  if tabnr > 0
+    execute 'silent! tabmove ' . (tabnr - 1)
+  endif
   let initial_buf = bufnr('%')
 
   let state = {
@@ -4558,10 +4636,7 @@ function! s:open_file_diff() abort
 
   " The side buffers contain the full file, so the cursor line maps directly
   " to a line in the file.
-  let lnum = line('.')
-  execute 'tabnew ' . fnameescape(path)
-  call cursor(lnum, 1)
-  normal! zz
+  call s:show_file(path, line('.'))
 endfunction
 
 function! s:commit_file_diff() abort
@@ -4686,6 +4761,16 @@ function! s:file_diff_alive(state) abort
         \ && s:win_exists(get(a:state, 'new_win', 0))
 endfunction
 
+" Find a live file diff view for {root}, so the command can reuse its tab.
+function! s:find_file_diff_state(root) abort
+  for state in reverse(copy(s:file_diff_instances))
+    if s:file_diff_alive(state) && get(state, 'root', '') ==# a:root
+      return state
+    endif
+  endfor
+  return {}
+endfunction
+
 function! s:close_file_diff(state) abort
   call s:file_diff_deactivate(a:state)
   call s:job_stop(a:state, 'diff-old')
@@ -4706,6 +4791,7 @@ function! s:close_file_diff(state) abort
   if tabnr > 0
     execute 'tabclose ' . tabnr
   endif
+  return tabnr
 endfunction
 
 function! s:close_file_diff_tab() abort

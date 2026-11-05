@@ -64,6 +64,9 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 :GitChanges v1.0 v2.0
 ```
 
+`GitChanges` 和 `GitChangesDiff` 会复用当前仓库已经打开的 tab，不会每次新建
+tab；用 `o` 打开文件时，如果该文件已在普通窗口中打开，会直接跳过去。
+
 文件列表中的帮助默认隐藏，按 `?` 显示，再按 `?` 隐藏。
 
 主 GitChanges 窗口和单文件 diff 窗口默认都会折叠未改动区域。按 `zR`

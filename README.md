@@ -64,6 +64,10 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 :GitChanges v1.0 v2.0
 ```
 
+Both `:GitChanges` and `:GitChangesDiff` reuse the tab already open for the
+repository instead of creating another one. Files opened with `o` jump to an
+existing normal window when the file is already open.
+
 Help is hidden by default in the file list. Press `?` to show it and `?` again to hide it.
 
 Diff panes fold unchanged blocks by default, both in the main browser and in
