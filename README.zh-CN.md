@@ -106,9 +106,10 @@ GitChanges 窗口，执行后也会同步刷新。
 :GitChangesBlame
 ```
 
-blame 窗口显示短 hash、时间（精确到分钟）、作者、邮箱和 commit message，
-并与文件同步滚动、同步光标；在 blame 窗口中按 `q` 关闭。
-窗口宽度用 `g:git_changes_blame_width` 配置（默认 72，最大不超过屏幕一半）。
+blame 窗口默认显示短 hash、时间（精确到分钟）、作者和 commit message，不显示邮箱；
+每一项都可以通过 `g:git_changes_blame_*` 配置开关。窗口会与文件同步滚动、同步光标，
+在 blame 窗口中按 `q` 关闭。宽度默认刚好显示到作者名；要显示邮箱或 commit message，
+把 `g:git_changes_blame_width` 设大即可。
 
 ### 单文件 diff
 
@@ -216,8 +217,15 @@ let g:git_changes_fold = 1
 " 左侧栏宽度
 let g:git_changes_width = 40
 
-" blame 窗口宽度
-let g:git_changes_blame_width = 72
+" blame 窗口字段开关（1 = 显示，0 = 隐藏）
+let g:git_changes_blame_hash = 1
+let g:git_changes_blame_time = 1
+let g:git_changes_blame_author = 1
+let g:git_changes_blame_email = 0
+let g:git_changes_blame_message = 1
+
+" blame 窗口宽度；0 表示刚好显示 hash、时间和作者
+let g:git_changes_blame_width = 0
 
 " commit 列表高度上限
 let g:git_changes_commits_height = 12

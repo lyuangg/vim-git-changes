@@ -5103,16 +5103,53 @@ endfunction
 " file line. Both windows scroll and move together; q closes the pane.
 " ============================================================================
 
+function! s:blame_flag(name, default) abort
+  return get(g:, 'git_changes_blame_' . a:name, a:default) ? 1 : 0
+endfunction
+
+function! s:blame_auto_width() abort
+  let parts = []
+  if s:blame_flag('hash', 1)
+    call add(parts, '00000000')
+  endif
+  if s:blame_flag('time', 1)
+    call add(parts, '2026-11-05 20:06')
+  endif
+  if s:blame_flag('author', 1)
+    call add(parts, 'abcdefghijkl')
+  endif
+  return max([12, strchars(join(parts, ' ')) + 1])
+endfunction
+
 function! s:blame_text(sha, author, email, date, summary) abort
+  let parts = []
+
   if a:sha =~# '^0\+$'
-    return strpart(a:sha, 0, 8) . ' Uncommitted'
+    if s:blame_flag('hash', 1)
+      call add(parts, strpart(a:sha, 0, 8))
+    endif
+    if s:blame_flag('time', 1) && !empty(a:date)
+      call add(parts, a:date)
+    endif
+    if s:blame_flag('author', 1)
+      call add(parts, 'Uncommitted')
+    endif
+    return join(parts, ' ')
   endif
 
-  let parts = [strpart(a:sha, 0, 8), a:date, s:truncate(a:author, 12)]
-  if !empty(a:email)
+  if s:blame_flag('hash', 1)
+    call add(parts, strpart(a:sha, 0, 8))
+  endif
+  if s:blame_flag('time', 1) && !empty(a:date)
+    call add(parts, a:date)
+  endif
+  if s:blame_flag('author', 1)
+    call add(parts, s:truncate(a:author, 12))
+  endif
+  if s:blame_flag('email', 0) && !empty(a:email)
     call add(parts, '<' . s:truncate(a:email, 24) . '>')
   endif
-  if !empty(a:summary)
+  if s:blame_flag('message', 1) && !empty(a:summary)
     call add(parts, s:truncate(a:summary, 48))
   endif
   return join(parts, ' ')
@@ -5295,9 +5332,11 @@ function! git_changes#blame() abort
   setlocal nonumber norelativenumber nolist nowrap
   setlocal signcolumn=no foldcolumn=0 nospell nomodeline
   setlocal nomodifiable
-  let blame_width = s:opt_int('git_changes_blame_width', 72)
-  let blame_width = min([blame_width, max([24, &columns / 2])])
-  execute 'vertical resize ' . blame_width
+  let configured = get(g:, 'git_changes_blame_width', 0)
+  if type(configured) != type(0) || configured <= 0
+    let configured = s:blame_auto_width()
+  endif
+  execute 'vertical resize ' . max([12, configured])
   execute 'nnoremap <buffer> <silent> q :<C-u>call '
         \ . s:sid . 'blame_close()<CR>'
 
