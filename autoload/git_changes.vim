@@ -4234,6 +4234,7 @@ function! s:init_file_diff_buffer(state, side) abort
   call s:map_keys('file_discard_diff', ':<C-u>call ' . s:sid . 'discard_file_diff()<CR>')
   call s:map_keys('commit', ':<C-u>call ' . s:sid . 'commit_file_diff()<CR>')
   call s:map_keys('commit_editor', ':<C-u>call ' . s:sid . 'commit_file_diff_editor()<CR>')
+  call s:map_keys('open_file', ':<C-u>call ' . s:sid . 'open_file_diff()<CR>')
   call s:map_open_main()
   call s:map_keys('cycle_next', ':<C-u>call ' . s:sid . 'cycle_file_diff(1)<CR>')
   call s:map_keys('cycle_prev', ':<C-u>call ' . s:sid . 'cycle_file_diff(-1)<CR>')
@@ -4538,6 +4539,26 @@ function! s:stage_file_diff(mode) abort
   endif
 
   call s:refresh_file_diff()
+endfunction
+
+function! s:open_file_diff() abort
+  let state = get(b:, 'git_changes_file_diff', {})
+  if empty(state) || !s:file_diff_alive(state)
+    return
+  endif
+
+  let path = state.root . '/' . state.spec.path
+  if !filereadable(path)
+    call s:err('file does not exist: ' . state.spec.path)
+    return
+  endif
+
+  " The side buffers contain the full file, so the cursor line maps directly
+  " to a line in the file.
+  let lnum = line('.')
+  execute 'tabnew ' . fnameescape(path)
+  call cursor(lnum, 1)
+  normal! zz
 endfunction
 
 function! s:commit_file_diff() abort

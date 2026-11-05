@@ -104,6 +104,7 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 | `r` | 重新读取两侧内容 |
 | `s` | stage 当前文件 |
 | `u` | unstage 当前文件 |
+| `o` | 在新标签页打开当前文件并跳到光标行 |
 | `D` | discard 当前文件的未暂存修改 |
 | `dS` | 切换暂存区对比（`git diff --staged`） |
 | `cc` | commit 已暂存内容 |

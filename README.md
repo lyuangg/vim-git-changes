@@ -104,6 +104,7 @@ toggle one fold, or set `g:git_changes_fold = 0` to keep everything expanded.
 | `r` | Re-read both sides |
 | `s` | Stage the current file |
 | `u` | Unstage the current file |
+| `o` | Open the file in a new tab at the cursor line |
 | `D` | Discard unstaged changes for the file |
 | `dS` | Toggle staged comparison (`git diff --staged`) |
 | `cc` | Commit staged changes |
