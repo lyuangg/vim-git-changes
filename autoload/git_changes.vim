@@ -9,10 +9,45 @@ function! s:err(msg) abort
   echohl None
 endfunction
 
-highlight default link GitChangesLabel       Title
-highlight default link GitChangesStatusInfo  String
-highlight default link GitChangesStatusBusy  WarningMsg
-highlight default link GitChangesStatusError ErrorMsg
+" Statusline groups on purpose set no background color, so the GitChanges
+" panes blend with the window instead of drawing a colored bar. Foreground
+" colors are copied from the colorscheme when the first statusline is drawn.
+let s:statusline_hl_ready = 0
+
+function! s:define_no_bg_group(group, source, attrs) abort
+  if hlexists(a:group)
+    return
+  endif
+
+  let guifg = synIDattr(synIDtrans(hlID(a:source)), 'fg#', 'gui')
+  let ctermfg = synIDattr(synIDtrans(hlID(a:source)), 'fg', 'cterm')
+  let parts = []
+  if !empty(a:attrs)
+    call add(parts, 'term=' . a:attrs)
+    call add(parts, 'cterm=' . a:attrs)
+    call add(parts, 'gui=' . a:attrs)
+  endif
+  if !empty(guifg)
+    call add(parts, 'guifg=' . guifg)
+  endif
+  if !empty(ctermfg)
+    call add(parts, 'ctermfg=' . ctermfg)
+  endif
+  call add(parts, 'ctermbg=NONE')
+  call add(parts, 'guibg=NONE')
+  execute 'highlight ' . a:group . ' ' . join(parts, ' ')
+endfunction
+
+function! s:init_statusline_highlights() abort
+  if s:statusline_hl_ready
+    return
+  endif
+  let s:statusline_hl_ready = 1
+  call s:define_no_bg_group('GitChangesPaneStatus', 'Normal', '')
+  call s:define_no_bg_group('GitChangesPaneIndex', 'Title', '')
+  call s:define_no_bg_group('GitChangesPaneName', 'Title', 'bold')
+  call s:define_no_bg_group('GitChangesPaneInfo', 'Comment', '')
+endfunction
 
 function! s:output_message(lines) abort
   let lines = filter(copy(a:lines),
@@ -22,37 +57,85 @@ function! s:output_message(lines) abort
         \ : s:truncate(join(lines, ' '), 300)
 endfunction
 
+function! s:win_in_current_tab(winid) abort
+  if !s:win_exists(a:winid)
+    return 0
+  endif
+  let info = getwininfo(a:winid)
+  return !empty(info) && info[0].tabnr == tabpagenr()
+endfunction
+
+function! s:pane_label(kind) abort
+  return a:kind ==# 'files' ? 'Files'
+        \ : a:kind ==# 'commits' ? 'Commits'
+        \ : 'Branches'
+endfunction
+
+function! s:pane_state_text(state, kind) abort
+  if a:kind ==# 'files'
+    if empty(a:state.commits) || a:state.commit_index < 0
+      return 'no commits'
+    endif
+
+    let entry = a:state.commits[a:state.commit_index]
+    if entry.kind ==# 'worktree'
+      let [staged, unstaged, untracked] = s:worktree_summary(a:state.files)
+      let parts = []
+      if staged > 0
+        call add(parts, staged . ' staged')
+      endif
+      if unstaged > 0
+        call add(parts, unstaged . ' unstaged')
+      endif
+      if untracked > 0
+        call add(parts, untracked . ' untracked')
+      endif
+      return 'worktree ' . (empty(parts) ? 'clean' : join(parts, ', '))
+    elseif entry.kind ==# 'compare'
+      return s:truncate(a:state.list_title, 48)
+    endif
+    return entry.short . '  ' . s:truncate(entry.subject, 48)
+  elseif a:kind ==# 'commits'
+    let commits = len(filter(copy(a:state.commits), 'v:val.kind ==# "commit"'))
+    return printf('%s (%d commits)', a:state.list_title, commits)
+  endif
+
+  for branch in a:state.branches
+    if get(branch, 'current', 0)
+      return 'current: ' . branch.name
+    endif
+  endfor
+  return ''
+endfunction
+
+" Each left pane shows its own name and a short summary of what it displays.
+" Progress messages go to the command line instead of these statuslines.
 function! s:update_statusline(state) abort
-  let winid = get(a:state, 'branches_win', 0)
-  if !get(g:, 'git_changes_statusline', 1) || !s:win_exists(winid)
+  if !get(g:, 'git_changes_statusline', 1)
     return
   endif
+  call s:init_statusline_highlights()
 
-  let info = getwininfo(winid)
-  if empty(info) || info[0].tabnr != tabpagenr()
-    " The pane is in another tab page; win_execute() cannot reach it.
-    return
-  endif
+  let panes = [
+        \ ['1', 'files', get(a:state, 'files_win', 0)],
+        \ ['2', 'commits', get(a:state, 'commits_win', 0)],
+        \ ['3', 'branches', get(a:state, 'branches_win', 0)],
+        \ ]
+  for [number, kind, winid] in panes
+    if !s:win_in_current_tab(winid)
+      continue
+    endif
 
-  let text = '%#GitChangesLabel#GitChanges%*'
-  let msg = get(a:state, 'status', '')
-  if !empty(msg)
-    let kind = get(a:state, 'status_kind', '')
-    let hl = kind ==# 'error' ? 'GitChangesStatusError'
-          \ : kind ==# 'busy' ? 'GitChangesStatusBusy'
-          \ : 'GitChangesStatusInfo'
-    let text .= printf(' %%#%s#%%<· %s%%*', hl, substitute(msg, '%', '%%', 'g'))
-  endif
-
-  if exists('*win_execute')
-    call win_execute(a:state.branches_win,
-          \ 'let &l:statusline = ' . string(text))
-  else
-    let cur = win_getid()
-    call win_gotoid(a:state.branches_win)
-    let &l:statusline = text
-    call win_gotoid(cur)
-  endif
+    let text = printf('%%#GitChangesPaneIndex#%s%%#GitChangesPaneName# %s',
+          \ number, s:pane_label(kind))
+    let detail = s:pane_state_text(a:state, kind)
+    if !empty(detail)
+      let text .= printf('%%#GitChangesPaneInfo# %%<· %s',
+            \ substitute(detail, '%', '%%', 'g'))
+    endif
+    let text .= '%#GitChangesPaneStatus#'
+    call win_execute(winid, 'let &l:statusline = ' . string(text))
+  endfor
 endfunction
 
 function! s:set_status(state, msg, ...) abort
@@ -60,7 +143,6 @@ function! s:set_status(state, msg, ...) abort
   let a:state.status = a:msg
   let a:state.status_kind = kind
 
-  call s:update_statusline(a:state)
   if kind ==# 'error'
     call s:err(a:msg)
   else
@@ -290,11 +372,11 @@ function! s:default_keymaps() abort
         \ 'copy_commit': 'yy',
         \ 'copy_branch': 'yy',
         \ 'edit_message': 'e',
-        \ 'commit': 'c',
+        \ 'commit': 'cc',
         \ 'commit_editor': 'C',
         \ 'pull': 'p',
         \ 'push': 'P',
-        \ 'new_branch': 'n',
+        \ 'new_branch': 'cb',
         \ 'branch_delete': 'd',
         \ 'checkout_branch': 'co',
         \ 'apply_branch': '<CR>',
@@ -432,6 +514,7 @@ function! s:init_diff_buffer(state, side) abort
   call s:map_keys('commit', ':<C-u>call ' . s:sid . 'commit_current()<CR>')
   call s:map_keys('pull', ':<C-u>call ' . s:sid . 'pull_current()<CR>')
   call s:map_keys('push', ':<C-u>call ' . s:sid . 'push_current()<CR>')
+  call s:map_keys('new_branch', ':<C-u>call ' . s:sid . 'new_branch()<CR>')
   call s:map_keys('commit_editor', ':<C-u>call ' . s:sid . 'commit_with_editor()<CR>')
   call s:map_keys('cycle_next', ':<C-u>call ' . s:sid . 'cycle_pane(1)<CR>')
   call s:map_keys('cycle_prev', ':<C-u>call ' . s:sid . 'cycle_pane(-1)<CR>')
@@ -1917,10 +2000,15 @@ function! s:load_branches(state, select_name) abort
 
   let header = ['# Branches']
   if get(a:state, 'branch_show_help', 0)
+    let km = s:keymaps()
     call extend(header, [
           \ '# j/k:select Enter:show 1/2/3 Tab/S-Tab',
-          \ '# c:commit C:edit p:pull P:push',
-          \ '# co:checkout n:new d:delete yy:copy ?:hide',
+          \ '# ' . km.new_branch . ':new ' . km.commit . ':commit '
+          \     . km.commit_editor . ':edit',
+          \ '# ' . km.pull . ':pull ' . km.push . ':push '
+          \     . km.checkout_branch . ':checkout',
+          \ '# ' . km.branch_delete . ':delete ' . km.copy_branch
+          \     . ':copy ?:hide',
           \ ])
   endif
   let a:state.branch_header = len(header)
@@ -1940,6 +2028,7 @@ function! s:load_branches(state, select_name) abort
     call s:set_cursor(a:state.branches_win,
           \ a:state.branch_header + 1 + selected)
   endif
+  call s:update_statusline(a:state)
 endfunction
 
 function! s:selected_branch(state) abort
@@ -2293,7 +2382,8 @@ function! s:files_header_lines(state, entry) abort
     if a:state.show_help
       call add(lines, '# s:stage u:unstage -:toggle S/U:all t:tree')
       call add(lines, '# r:refresh d:discard o:open ?:hide')
-      call add(lines, '# Esc:worktree  yy:path c:commit p:pull P:push n:new')
+      call add(lines, '# Esc:worktree yy:path cc:commit cb:new')
+      call add(lines, '# C:edit p:pull P:push')
       call add(lines, '# J/K:scroll C-d/u:half 1/2/3 Tab/S-Tab')
       call add(lines, '# H/L:scroll diff left/right')
     endif
@@ -2301,7 +2391,7 @@ function! s:files_header_lines(state, entry) abort
     call add(lines, '# Range: ' . a:state.list_title)
     if a:state.show_help
       call add(lines, '# t:tree r:refresh ?:hide yy:path Esc:worktree')
-      call add(lines, '# c:commit p:pull P:push n:new')
+      call add(lines, '# cc:commit cb:new C:edit p:pull P:push')
       call add(lines, '# J/K:scroll C-d/u:half 1/2/3 Tab/S-Tab')
       call add(lines, '# H/L:scroll diff left/right')
     endif
@@ -2314,7 +2404,7 @@ function! s:files_header_lines(state, entry) abort
     endfor
     if a:state.show_help
       call add(lines, '# t:tree r:refresh ?:hide yy:path Esc:worktree')
-      call add(lines, '# c:commit p:pull P:push n:new')
+      call add(lines, '# cc:commit cb:new C:edit p:pull P:push')
       call add(lines, '# J/K:scroll C-d/u:half 1/2/3 Tab/S-Tab')
       call add(lines, '# H/L:scroll diff left/right')
     endif
@@ -2449,6 +2539,7 @@ function! s:render_files(state, entry, files) abort
 
   let lines = header_lines + body
   call s:set_lines(a:state.files_buf, lines)
+  call s:update_statusline(a:state)
 endfunction
 
 function! s:file_index_line(state, index) abort
@@ -2577,6 +2668,7 @@ function! s:load_commits(state) abort
   if !empty(entries)
     call s:set_cursor(a:state.commits_win, a:state.commits_header + 1)
   endif
+  call s:update_statusline(a:state)
 endfunction
 
 function! s:load_files(state, entry) abort
@@ -2656,8 +2748,10 @@ function! s:load_side_buffer(state, side, path, lines, detect_filetype, label) a
 
   call win_execute(winid, 'setlocal nowrap number numberwidth=4 cursorline '
         \ . 'scrollbind cursorbind foldenable foldmethod=diff foldlevel=99')
+  call s:init_statusline_highlights()
   let label = substitute(a:label, '%', '%%', 'g')
-  call win_execute(winid, 'let &l:statusline = ' . string(label))
+  call win_execute(winid, 'let &l:statusline = ' . string(
+        \ '%#GitChangesPaneInfo#' . label . '%#GitChangesPaneStatus#'))
   if content_changed || path_changed
     call s:set_cursor(winid, 1)
   endif
@@ -2941,6 +3035,7 @@ function! s:show_no_commits(state) abort
   call s:show_side_message(a:state, ['(no commits)'])
   call s:set_cursor(a:state.commits_win, 1)
   call s:set_cursor(a:state.files_win, 1)
+  call s:update_statusline(a:state)
 endfunction
 
 

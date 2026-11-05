@@ -82,8 +82,9 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 | `d` | 丢弃未暂存改动，或删除未跟踪文件 |
 | `o` | 在新标签页打开当前文件（diff 窗口也可用） |
 | `yy` | 复制文件绝对路径 |
-| `c` | commit 已暂存内容 |
+| `cc` | commit 已暂存内容 |
 | `C` | 使用编辑器提交已暂存内容（显示分支和暂存状态） |
+| `cb` | 从所选分支新建分支并切换过去 |
 | `p` | pull |
 | `P` | push |
 | `q` | 关闭 GitChanges tab |
@@ -106,7 +107,7 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 | `j` / `k` | 移动分支选择，不改变其他窗口 |
 | `<CR>` | 显示所选分支的 commit 和文件 |
 | `co` | checkout 所选分支 |
-| `n` | 从所选分支新建分支并切换过去 |
+| `cb` | 从所选分支新建分支并切换过去 |
 | `d` | 删除所选本地分支 |
 | `yy` | 复制分支名 |
 | `?` | 显示 / 隐藏帮助（默认隐藏） |
@@ -153,7 +154,7 @@ let g:git_changes_confirm_branch_delete = 1
 " 没有 remote 时重写旧 commit 前是否确认
 let g:git_changes_confirm_rewrite = 1
 
-" 是否在分支列表底部状态栏显示操作状态
+" 是否在左侧窗口状态栏显示编号、窗口名字和当前状态（无背景色）
 let g:git_changes_statusline = 1
 
 " 分支没有 upstream 时，push 前是否询问并设置 upstream
@@ -198,11 +199,11 @@ let g:git_changes_keymaps = {
 | `copy_commit` | `yy` |
 | `copy_branch` | `yy` |
 | `edit_message` | `e` |
-| `commit` | `c` |
+| `commit` | `cc` |
 | `commit_editor` | `C` |
 | `pull` | `p` |
 | `push` | `P` |
-| `new_branch` | `n` |
+| `new_branch` | `cb` |
 | `branch_delete` | `d` |
 | `checkout_branch` | `co` |
 | `apply_branch` | `<CR>` |

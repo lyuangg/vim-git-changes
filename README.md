@@ -82,8 +82,9 @@ Help is hidden by default in the file list. Press `?` to show it and `?` again t
 | `d` | Discard unstaged changes, or delete an untracked file |
 | `o` | Open the current file in a new tab (also in diff windows) |
 | `yy` | Copy the absolute file path |
-| `c` | Commit staged changes |
+| `cc` | Commit staged changes |
 | `C` | Commit staged changes using an editor with a status template |
+| `cb` | Create a branch from the selected branch and switch to it |
 | `p` | Pull |
 | `P` | Push |
 | `q` | Close the GitChanges tab |
@@ -106,17 +107,18 @@ Help is hidden by default in the file list. Press `?` to show it and `?` again t
 | `j` / `k` | Move branch selection without changing the other panes |
 | `<CR>` | Show the selected branch's commits and files |
 | `co` | Check out the selected branch |
-| `n` | Create a branch from the selected branch and switch to it |
+| `cb` | Create a branch from the selected branch and switch to it |
 | `d` | Delete the selected local branch |
 | `yy` | Copy the branch name |
 | `?` | Show/hide help (hidden by default) |
 
 ### Status messages
 
-Refresh, pull, and push show progress in the branch pane statusline and in the
-Vim message line (`:messages` keeps the history). Results such as
+Refresh, pull, and push show progress in the Vim command line (the message area
+at the bottom of the screen); `:messages` keeps the history. Results such as
 `Already up to date` or `Pushed to origin/main` stay visible until the next
-operation.
+operation. The left pane statuslines only show each pane's name and a summary of
+what it displays, so they never hide progress behind a stale status.
 
 If `P` is pressed on a branch without an upstream, the plugin asks whether to
 push it to the preferred remote (usually `origin/<branch>`) and set the
@@ -166,7 +168,8 @@ let g:git_changes_confirm_branch_delete = 1
 " Confirm before rewriting an older commit without a remote
 let g:git_changes_confirm_rewrite = 1
 
-" Show operation status in the branch pane statusline
+" Show each left pane's number, name and state in its statusline
+" (the statusline has no background color)
 let g:git_changes_statusline = 1
 
 " Ask before pushing a branch that has no upstream and setting one
@@ -211,11 +214,11 @@ let g:git_changes_keymaps = {
 | `copy_commit` | `yy` |
 | `copy_branch` | `yy` |
 | `edit_message` | `e` |
-| `commit` | `c` |
+| `commit` | `cc` |
 | `commit_editor` | `C` |
 | `pull` | `p` |
 | `push` | `P` |
-| `new_branch` | `n` |
+| `new_branch` | `cb` |
 | `branch_delete` | `d` |
 | `checkout_branch` | `co` |
 | `apply_branch` | `<CR>` |
