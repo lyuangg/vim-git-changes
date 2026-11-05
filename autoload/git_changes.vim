@@ -4187,7 +4187,6 @@ function! s:open_sxs_diff(root, spec) abort
         \ 'clean': 0,
         \ }
   let t:git_changes_file_diff = state
-  call add(s:file_diff_instances, state)
 
   let state.old_win = win_getid()
   let state.old_buf = s:new_scratch(
@@ -4205,6 +4204,10 @@ function! s:open_sxs_diff(root, spec) abort
         \ && !getbufvar(initial_buf, '&modified')
     execute 'silent! bwipeout ' . initial_buf
   endif
+
+  " Register only after both sides exist: wiping the initial buffer above
+  " triggers a BufWipeout filter that drops states with no live buffers.
+  call add(s:file_diff_instances, state)
 
   let total = winwidth(state.old_win) + winwidth(state.new_win) + 1
   call win_gotoid(state.old_win)
