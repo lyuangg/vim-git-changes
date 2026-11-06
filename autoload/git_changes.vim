@@ -4231,10 +4231,15 @@ function! git_changes#statusline() abort
 endfunction
 
 let s:blame_line_cache = {}
+let s:blame_line_jobs = {}
 
 function! s:statusline_clear() abort
   let s:statusline_cache = {}
   let s:blame_line_cache = {}
+  for fake in values(s:blame_line_jobs)
+    call s:job_stop(fake, 'blame_line')
+  endfor
+  let s:blame_line_jobs = {}
 endfunction
 
 function! s:parse_blame_entries(out) abort
@@ -4357,20 +4362,102 @@ function! git_changes#blame_line_info() abort
   return entries[lnum - 1]
 endfunction
 
+function! s:format_blame_line(info) abort
+  let text = get(g:, 'git_changes_blame_line_format', '%a %d')
+  for [key, value] in items({'h': a:info.sha, 'a': a:info.author,
+        \ 'e': a:info.email, 'd': a:info.date, 's': a:info.summary})
+    let text = substitute(text, '%' . key, escape(value, '\&~'), 'g')
+  endfor
+  return trim(text)
+endfunction
+
 " Formatted blame for the current line. g:git_changes_blame_line_format
 " supports %h (short hash), %a (author), %e (email), %d (date), %s (summary).
 function! git_changes#blame_line() abort
   let info = git_changes#blame_line_info()
-  if empty(info)
-    return ''
+  return empty(info) ? '' : s:format_blame_line(info)
+endfunction
+
+function! s:start_blame_line_job(root, path, key) abort
+  let contents = ''
+  if &modified
+    let contents = tempname()
+    call writefile(getline(1, '$'), contents)
   endif
 
-  let text = get(g:, 'git_changes_blame_line_format', '%a %d')
-  for [key, value] in items({'h': info.sha, 'a': info.author,
-        \ 'e': info.email, 'd': info.date, 's': info.summary})
-    let text = substitute(text, '%' . key, escape(value, '\&~'), 'g')
-  endfor
-  return trim(text)
+  let args = ['blame', '--line-porcelain']
+  if !empty(contents)
+    call extend(args, ['--contents', contents])
+  endif
+  call extend(args, ['--', a:path])
+
+  let fake = {'files_buf': bufnr('%'), 'root': a:root, 'blame_tok': 1}
+  let ctx = {'key': a:key, 'contents': contents, 'state': fake}
+  let s:blame_line_jobs[a:key] = fake
+  call s:git_job(fake, 'blame_line', 'blame_tok', 1, args,
+        \ function('s:on_blame_line_job', [ctx]))
+endfunction
+
+function! s:on_blame_line_job(ctx, result) abort
+  let key = a:ctx.key
+  if get(s:blame_line_jobs, key, {}) isnot a:ctx.state
+    return
+  endif
+  call remove(s:blame_line_jobs, key)
+  if !empty(a:ctx.contents)
+    call delete(a:ctx.contents)
+  endif
+  if empty(a:result.out)
+    return
+  endif
+
+  let s:blame_line_cache[key] = {
+        \ 'time': localtime(),
+        \ 'entries': s:parse_blame_entries(a:result.out),
+        \ }
+  if len(s:blame_line_cache) > 100
+    call filter(s:blame_line_cache, 'localtime() - v:val.time < 30')
+  endif
+  silent! redrawstatus
+endfunction
+
+" Asynchronous variant for statuslines: returns cached data immediately and
+" starts a background blame when the cache is missing or stale.
+function! git_changes#blame_line_info_async() abort
+  let root = s:repo_root()
+  if empty(root)
+    return {}
+  endif
+  let path = s:current_repo_path(root)
+  if empty(path) || !filereadable(root . '/' . path)
+    return {}
+  endif
+
+  let buf = bufnr('%')
+  let tick = getbufvar(buf, 'changedtick', 0)
+  let key = buf . ':' . tick
+  let now = localtime()
+  let cached = get(s:blame_line_cache, key, {})
+
+  if empty(cached) || now - cached.time >= 10
+    if !has_key(s:blame_line_jobs, key)
+      call s:start_blame_line_job(root, path, key)
+    endif
+  endif
+
+  if empty(cached)
+    return {}
+  endif
+  let lnum = line('.')
+  if lnum < 1 || lnum > len(cached.entries)
+    return {}
+  endif
+  return cached.entries[lnum - 1]
+endfunction
+
+function! git_changes#blame_line_async() abort
+  let info = git_changes#blame_line_info_async()
+  return empty(info) ? '' : s:format_blame_line(info)
 endfunction
 
 " Resolve an optional command argument to a path relative to the repo root.

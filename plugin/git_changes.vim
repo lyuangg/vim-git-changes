@@ -15,6 +15,10 @@ function! GitChangesBlameLineInfo() abort
   return git_changes#blame_line_info()
 endfunction
 
+function! GitChangesBlameLineAsync() abort
+  return git_changes#blame_line_async()
+endfunction
+
 command! -bar -nargs=* -complete=customlist,git_changes#complete_refs GitChanges call git_changes#open(<f-args>)
 command! -bar GitChangesQuit   call git_changes#quit()
 command! -bar GitChangesDiffQuit call git_changes#diff_quit()

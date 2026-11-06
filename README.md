@@ -122,6 +122,16 @@ change it (`%h` short hash, `%a` author, `%e` email, `%d` date, `%s` summary).
 `git_changes#blame_line_info()` returns a dict with `sha`, `author`, `email`,
 `date`, and `summary`. Results are cached per buffer revision for a few seconds.
 
+For large files, use the asynchronous variant in the statusline:
+
+```vim
+set statusline+=%{GitChangesBlameLineAsync()}
+```
+
+It returns the cached value immediately and refreshes it with a background job,
+then redraws the statusline; the first call after a change may be empty for a
+moment. `GitChangesBlameLine()` stays synchronous for scripts.
+
 ### Blame
 
 ```vim

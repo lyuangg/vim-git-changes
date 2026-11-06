@@ -118,6 +118,15 @@ set statusline+=%{GitChangesBlameLine()}
 `git_changes#blame_line_info()` 返回包含 `sha`、`author`、`email`、`date`、
 `summary` 的字典。结果按 buffer 版本缓存几秒。
 
+文件较大时，状态栏建议用异步版本：
+
+```vim
+set statusline+=%{GitChangesBlameLineAsync()}
+```
+
+它会立即返回缓存值，并在后台执行 blame，完成后刷新状态栏；修改后的第一次调用可能
+会短暂为空。脚本里仍可使用同步的 `GitChangesBlameLine()`。
+
 ### Blame
 
 ```vim
