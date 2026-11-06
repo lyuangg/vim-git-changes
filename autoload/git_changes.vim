@@ -221,12 +221,23 @@ function! s:repo_root() abort
     return state.root
   endif
 
+  " A buffer opened through a symlink is edited as its target file. Prefer
+  " the target's repository over the working directory, which may be another
+  " repository entirely.
+  let file = expand('%:p')
+  if !empty(file) && &buftype ==# ''
+    let real = resolve(file)
+    if real !=# file
+      let [root, path] = s:buffer_repo_path()
+      return root
+    endif
+  endif
+
   let out = systemlist('git rev-parse --show-toplevel 2>&1')
   if !v:shell_error && !empty(out)
     return out[0]
   endif
 
-  let file = expand('%:p')
   if !empty(file)
     let dir = fnamemodify(file, ':h')
     let out = systemlist('git -C ' . shellescape(dir)
@@ -4573,11 +4584,14 @@ function! s:statusline_unstaged_marker() abort
 endfunction
 
 function! git_changes#statusline() abort
-  let dir = expand('%:p:h')
+  let file = expand('%:p')
+  if !empty(file)
+    let file = resolve(file)
+  endif
+  let dir = empty(file) ? '' : fnamemodify(file, ':h')
   if empty(dir)
     let dir = getcwd()
   endif
-  let file = expand('%:p')
   let key = dir . nr2char(31) . file
 
   " Refresh only in normal mode; in insert/visual mode show the last value.
@@ -4756,6 +4770,7 @@ function! s:buffer_repo_path() abort
   if empty(file)
     return ['', '']
   endif
+  let file = resolve(file)
 
   let current = simplify(fnamemodify(file, ':h'))
   while len(current) > 1 && current[-1:] ==# '/'
@@ -5380,7 +5395,7 @@ function! s:current_repo_path(root) abort
   if empty(name)
     return ''
   endif
-  return s:repo_relative_path(a:root, name)
+  return s:repo_relative_path(a:root, resolve(name))
 endfunction
 
 function! s:repo_relative_path(root, path) abort
