@@ -4215,43 +4215,87 @@ function! git_changes#diff_quit() abort
   call s:close_file_diff(state)
 endfunction
 
-let s:statusline_cache = {}
+let s:gitdir_cache = {}
 
-" Lightweight statusline helper: [Git(branch)] inside a repository.
-function! git_changes#statusline() abort
-  let key = getcwd() . "\n" . expand('%:p')
-  let now = localtime()
-  let cached = get(s:statusline_cache, key, {})
-  if !empty(cached) && now - cached.time < 2
-    return cached.text
+" Find the git directory for {dir} without running git: walk up to .git and
+" follow the "gitdir:" file used by worktrees and submodules.
+function! s:git_dir_for(dir) abort
+  let dir = simplify(fnamemodify(a:dir, ':p'))
+  while len(dir) > 1 && dir[-1:] ==# '/'
+    let dir = dir[:-2]
+  endwhile
+  if has_key(s:gitdir_cache, dir)
+    return s:gitdir_cache[dir]
   endif
 
-  let root = s:repo_root()
-  let text = ''
-  if !empty(root)
-    let branch = s:current_branch(root)
-    if empty(branch)
-      let sha = s:git_one(root, 'rev-parse --short HEAD')
-      let branch = empty(sha) ? '' : sha
+  let current = dir
+  let result = ''
+  while 1
+    let candidate = current . '/.git'
+    if isdirectory(candidate)
+      let result = candidate
+      break
+    elseif filereadable(candidate)
+      let line = get(readfile(candidate, '', 1), 0, '')
+      let gitdir = matchstr(line, '^gitdir:\s*\zs.*')
+      if !empty(gitdir)
+        if gitdir !~# '^/'
+          let gitdir = simplify(current . '/' . gitdir)
+        endif
+        let result = gitdir
+      endif
+      break
     endif
-    let text = empty(branch) ? '[Git]' : '[Git(' . branch . ')]'
+
+    let parent = fnamemodify(current, ':h')
+    if parent ==# current
+      break
+    endif
+    let current = parent
+  endwhile
+
+  let s:gitdir_cache[dir] = result
+  if len(s:gitdir_cache) > 200
+    call filter(s:gitdir_cache, 'v:val !=# ""')
+  endif
+  return result
+endfunction
+
+" Lightweight statusline helper: [Git(branch)] inside a repository. Reads
+" .git/HEAD directly, so redraws never spawn git and the branch follows the
+" current buffer's repository instead of the working directory.
+function! git_changes#statusline() abort
+  let dir = expand('%:p:h')
+  if empty(dir)
+    let dir = getcwd()
   endif
 
-  let s:statusline_cache[key] = {'time': now, 'text': text}
-  if len(s:statusline_cache) > 200
-    call filter(s:statusline_cache, 'now - v:val.time < 10')
+  let gitdir = s:git_dir_for(dir)
+  if empty(gitdir)
+    return ''
   endif
-  return text
+
+  let head = get(readfile(gitdir . '/HEAD', '', 1), 0, '')
+  if head =~# '^ref: '
+    let branch = substitute(strpart(head, 5), '^refs/heads/', '', '')
+    return '[Git(' . branch . ')]'
+  elseif head =~# '^[0-9a-f]\{40\}'
+    return '[Git(' . strpart(head, 0, 7) . ')]'
+  endif
+  return '[Git]'
 endfunction
 
 let s:blame_line_cache = {}
 let s:blame_line_jobs = {}
 
 function! s:statusline_clear() abort
-  let s:statusline_cache = {}
+  let s:gitdir_cache = {}
   let s:blame_line_cache = {}
-  for fake in values(s:blame_line_jobs)
-    call s:job_stop(fake, 'blame_line')
+  for job in values(s:blame_line_jobs)
+    call s:job_stop(job.state, 'blame_line')
+    if !empty(job.ctx.contents)
+      call delete(job.ctx.contents)
+    endif
   endfor
   let s:blame_line_jobs = {}
 endfunction
@@ -4357,14 +4401,44 @@ function! s:blame_line_entries(root, path) abort
   return entries
 endfunction
 
+" Resolve the current buffer's worktree root and repo-relative path without
+" spawning git. Handles normal .git directories and worktree/submodule .git
+" files.
+function! s:buffer_repo_path() abort
+  let file = expand('%:p')
+  if empty(file)
+    return ['', '']
+  endif
+
+  let current = simplify(fnamemodify(file, ':h'))
+  while len(current) > 1 && current[-1:] ==# '/'
+    let current = current[:-2]
+  endwhile
+
+  let root = ''
+  let scan = current
+  while 1
+    if isdirectory(scan . '/.git') || filereadable(scan . '/.git')
+      let root = scan
+      break
+    endif
+    let parent = fnamemodify(scan, ':h')
+    if parent ==# scan
+      break
+    endif
+    let scan = parent
+  endwhile
+  if empty(root)
+    return ['', '']
+  endif
+
+  return [root, s:repo_relative_path(root, file)]
+endfunction
+
 " Blame data for the current line: {sha, author, email, date, summary}.
 function! git_changes#blame_line_info() abort
-  let root = s:repo_root()
-  if empty(root)
-    return {}
-  endif
-  let path = s:current_repo_path(root)
-  if empty(path) || !filereadable(root . '/' . path)
+  let [root, path] = s:buffer_repo_path()
+  if empty(root) || empty(path) || !filereadable(root . '/' . path)
     return {}
   endif
 
@@ -4407,14 +4481,15 @@ function! s:start_blame_line_job(root, path, key) abort
 
   let fake = {'files_buf': bufnr('%'), 'root': a:root, 'blame_tok': 1}
   let ctx = {'key': a:key, 'contents': contents, 'state': fake}
-  let s:blame_line_jobs[a:key] = fake
+  let s:blame_line_jobs[a:key] = {'state': fake, 'ctx': ctx}
   call s:git_job(fake, 'blame_line', 'blame_tok', 1, args,
         \ function('s:on_blame_line_job', [ctx]))
 endfunction
 
 function! s:on_blame_line_job(ctx, result) abort
   let key = a:ctx.key
-  if get(s:blame_line_jobs, key, {}) isnot a:ctx.state
+  let job = get(s:blame_line_jobs, key, {})
+  if empty(job) || job.state isnot a:ctx.state
     return
   endif
   call remove(s:blame_line_jobs, key)
@@ -4438,12 +4513,8 @@ endfunction
 " Asynchronous variant for statuslines: returns cached data immediately and
 " starts a background blame when the cache is missing or stale.
 function! git_changes#blame_line_info_async() abort
-  let root = s:repo_root()
-  if empty(root)
-    return {}
-  endif
-  let path = s:current_repo_path(root)
-  if empty(path) || !filereadable(root . '/' . path)
+  let [root, path] = s:buffer_repo_path()
+  if empty(root) || empty(path) || !filereadable(root . '/' . path)
     return {}
   endif
 

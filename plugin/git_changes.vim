@@ -8,6 +8,10 @@ function! GitChangesStatusline() abort
 endfunction
 
 function! GitChangesBlameLine() abort
+  return git_changes#blame_line_async()
+endfunction
+
+function! GitChangesBlameLineSync() abort
   return git_changes#blame_line()
 endfunction
 

@@ -103,9 +103,10 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 set statusline+=%{GitChangesStatusline()}
 ```
 
-在仓库内显示 `[Git(分支名)]`，不在仓库内返回空。分支名会缓存几秒，避免每次重绘都
-执行 git；也可以直接使用 `git_changes#statusline()`。如果插件是懒加载的，需要保证
-启动时已加载，状态栏才能立即生效。
+在仓库内显示 `[Git(分支名)]`，不在仓库内返回空。它直接读取 `.git/HEAD`，重绘时
+不会启动 git；并且跟随当前 buffer 所在的仓库（包括 worktree 和 submodule），而不是
+Vim 的当前目录。也可以直接使用 `git_changes#statusline()`。如果插件是懒加载的，
+需要保证启动时已加载，状态栏才能立即生效。
 
 当前行 blame：
 
@@ -118,14 +119,9 @@ set statusline+=%{GitChangesBlameLine()}
 `git_changes#blame_line_info()` 返回包含 `sha`、`author`、`email`、`date`、
 `summary` 的字典。结果按 buffer 版本缓存几秒。
 
-文件较大时，状态栏建议用异步版本：
-
-```vim
-set statusline+=%{GitChangesBlameLineAsync()}
-```
-
-它会立即返回缓存值，并在后台执行 blame，完成后刷新状态栏；修改后的第一次调用可能
-会短暂为空。脚本里仍可使用同步的 `GitChangesBlameLine()`。
+`GitChangesBlameLine()` 默认是异步的，适合放在状态栏：立即返回缓存值，并在后台
+执行 blame，完成后刷新状态栏；修改后的第一次调用可能会短暂为空。需要同步取值时
+使用 `GitChangesBlameLineSync()`（或 `git_changes#blame_line()`）。
 
 ### Blame
 

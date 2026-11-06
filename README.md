@@ -106,10 +106,12 @@ toggle one fold, or set `g:git_changes_fold = 0` to keep everything expanded.
 set statusline+=%{GitChangesStatusline()}
 ```
 
-Shows `[Git(branch)]` inside a repository and nothing elsewhere. The branch is
-cached for a couple of seconds so redraws do not run git every time. The same
-value is available from `git_changes#statusline()`. With lazy loading, make sure
-the plugin is loaded at startup if the statusline should work immediately.
+Shows `[Git(branch)]` inside a repository and nothing elsewhere. It reads
+`.git/HEAD` directly, so redraws never spawn git; it follows the current
+buffer's repository (including worktrees and submodules) instead of the working
+directory. The same value is available from `git_changes#statusline()`. With
+lazy loading, make sure the plugin is loaded at startup if the statusline should
+work immediately.
 
 For the blame of the current line:
 
@@ -122,15 +124,11 @@ change it (`%h` short hash, `%a` author, `%e` email, `%d` date, `%s` summary).
 `git_changes#blame_line_info()` returns a dict with `sha`, `author`, `email`,
 `date`, and `summary`. Results are cached per buffer revision for a few seconds.
 
-For large files, use the asynchronous variant in the statusline:
-
-```vim
-set statusline+=%{GitChangesBlameLineAsync()}
-```
-
-It returns the cached value immediately and refreshes it with a background job,
-then redraws the statusline; the first call after a change may be empty for a
-moment. `GitChangesBlameLine()` stays synchronous for scripts.
+`GitChangesBlameLine()` is asynchronous and safe for statuslines: it returns
+the cached value immediately and refreshes it with a background job, then
+redraws the statusline. The first call after a change may be empty for a moment.
+Use `GitChangesBlameLineSync()` (or `git_changes#blame_line()`) when you need a
+value synchronously.
 
 ### Blame
 
