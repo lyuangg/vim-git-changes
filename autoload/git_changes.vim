@@ -205,6 +205,11 @@ function! s:truncate(text, max) abort
 endfunction
 
 function! s:repo_root() abort
+  let state = get(b:, 'git_changes', {})
+  if !empty(state) && !empty(get(state, 'root', ''))
+    return state.root
+  endif
+
   let out = systemlist('git rev-parse --show-toplevel 2>&1')
   if !v:shell_error && !empty(out)
     return out[0]
@@ -2569,16 +2574,8 @@ function! s:checkout_branch() abort
     return
   endif
 
-  call s:load_branches(state, branch.name,
-        \ function('s:after_checkout_branch', [state]))
   echomsg 'Switched to branch: ' . branch.name
-endfunction
-
-function! s:after_checkout_branch(state) abort
-  if !s:state_alive(a:state) || a:state.branch_index < 0
-    return
-  endif
-  call s:show_branch(a:state, a:state.branches[a:state.branch_index])
+  execute 'GitChanges'
 endfunction
 
 function! s:copy_branch_name() abort
@@ -2621,9 +2618,8 @@ function! s:new_branch() abort
     return
   endif
 
-  call s:load_branches(state, name,
-        \ function('s:after_checkout_branch', [state]))
   echomsg 'Created branch: ' . name
+  execute 'GitChanges'
 endfunction
 
 function! s:delete_branch() abort
