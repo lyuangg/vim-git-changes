@@ -565,7 +565,7 @@ function! s:default_keymaps() abort
         \ 'copy_commit': 'yy',
         \ 'copy_branch': 'yy',
         \ 'edit_message': 'e',
-        \ 'load_more': 'l',
+        \ 'load_more': 'L',
         \ 'commit': 'cc',
         \ 'commit_editor': 'C',
         \ 'open_main': 'gs',
