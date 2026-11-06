@@ -5195,6 +5195,109 @@ function! git_changes#branch_merge_abort() abort
   call s:abort_merge_root(root)
 endfunction
 
+function! s:parse_hunks(lines) abort
+  let hunks = []
+  for line in a:lines
+    if line !~# '^@@ '
+      continue
+    endif
+
+    let match = matchlist(line,
+          \ '^@@ -\d\+\%(,\d\+\)\? +\(\d\+\)\%(,\(\d\+\)\)\? @@')
+    if empty(match)
+      continue
+    endif
+
+    let start = str2nr(match[1])
+    let new_count = empty(match[2]) ? 1 : str2nr(match[2])
+    call add(hunks, {
+          \ 'lnum': new_count > 0 ? start : max([1, start]),
+          \ 'count': new_count,
+          \ })
+  endfor
+  return hunks
+endfunction
+
+" Hunk positions for the current buffer compared with the index, so only
+" unstaged and unsaved changes are included.
+function! s:unstaged_hunks(root, path) abort
+  let index = tempname()
+  let work = tempname()
+  try
+    let result = s:git_run(a:root,
+          \ 'show ' . shellescape(':' . a:path))
+    let index_lines = result.ok
+          \ ? map(result.out, 'substitute(v:val, "\r$", "", "")')
+          \ : []
+    call writefile(index_lines, index)
+    call writefile(getline(1, '$'), work)
+
+    let diff = s:git_run(a:root,
+          \ 'diff --no-index --unified=0 --no-ext-diff --no-color -- '
+          \ . shellescape(index) . ' ' . shellescape(work))
+    return s:parse_hunks(diff.out)
+  finally
+    call delete(index)
+    call delete(work)
+  endtry
+endfunction
+
+function! s:goto_chunk(delta) abort
+  if &buftype !=# ''
+    call s:err('current buffer is not a file')
+    return
+  endif
+
+  let [root, path] = s:buffer_repo_path()
+  if empty(root) || empty(path)
+    call s:err('current file is not inside a Git repository')
+    return
+  endif
+
+  let hunks = s:unstaged_hunks(root, path)
+  if empty(hunks)
+    echomsg 'No unstaged chunks: ' . path
+    return
+  endif
+
+  let line = line('.')
+  let target = 0
+  if a:delta > 0
+    for hunk in hunks
+      if hunk.lnum > line
+        let target = hunk.lnum
+        break
+      endif
+    endfor
+  else
+    for hunk in reverse(copy(hunks))
+      if hunk.lnum < line
+        let target = hunk.lnum
+        break
+      endif
+    endfor
+  endif
+
+  if target <= 0
+    let message = a:delta > 0
+          \ ? 'No next unstaged chunk'
+          \ : 'No previous unstaged chunk'
+    echomsg message
+    return
+  endif
+
+  call cursor(target, 1)
+  normal! zz
+endfunction
+
+function! git_changes#next_chunk() abort
+  call s:goto_chunk(1)
+endfunction
+
+function! git_changes#prev_chunk() abort
+  call s:goto_chunk(-1)
+endfunction
+
 
 " ============================================================================
 " GitChangesDiff

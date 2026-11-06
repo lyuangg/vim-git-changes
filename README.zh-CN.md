@@ -107,6 +107,10 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 
 " 撤销正在进行的合并（例如合并冲突后）
 :GitChangesBranchMergeAbort
+
+" 跳到当前文件下一个 / 上一个未暂存的 chunk
+:GitChangesNextChunk
+:GitChangesPrevChunk
 ```
 
 ### 状态栏

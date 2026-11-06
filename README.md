@@ -110,6 +110,10 @@ toggle one fold, or set `g:git_changes_fold = 0` to keep everything expanded.
 
 " Abort an in-progress merge (for example after a conflict)
 :GitChangesBranchMergeAbort
+
+" Jump to the next or previous unstaged chunk in the current file
+:GitChangesNextChunk
+:GitChangesPrevChunk
 ```
 
 ### Statusline

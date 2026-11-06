@@ -38,6 +38,8 @@ command! -nargs=? -complete=customlist,git_changes#complete_branches
 command! -nargs=? -complete=customlist,git_changes#complete_branches
       \ GitChangesBranchMerge call git_changes#branch_merge(<q-args>)
 command! -bar GitChangesBranchMergeAbort call git_changes#branch_merge_abort()
+command! -bar GitChangesNextChunk call git_changes#next_chunk()
+command! -bar GitChangesPrevChunk call git_changes#prev_chunk()
 command! -bar GitChangesBlame call git_changes#blame()
 command! -nargs=? -complete=file GitChangesStage call git_changes#stage(<q-args>)
 command! -nargs=? -complete=file GitChangesUnstage call git_changes#unstage(<q-args>)
