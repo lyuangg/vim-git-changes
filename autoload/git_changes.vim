@@ -197,6 +197,17 @@ function! git_changes#complete_refs(arglead, cmdline, cursorpos) abort
   return result
 endfunction
 
+function! git_changes#complete_branches(arglead, cmdline, cursorpos) abort
+  let root = s:repo_root()
+  if empty(root)
+    return []
+  endif
+
+  return filter(s:git(root,
+        \ 'for-each-ref ' . shellescape('--format=%(refname:short)')
+        \ . ' refs/heads'), 'stridx(v:val, a:arglead) == 0')
+endfunction
+
 function! s:truncate(text, max) abort
   if a:max < 4 || strchars(a:text) <= a:max
     return a:text
@@ -579,6 +590,8 @@ function! s:default_keymaps() abort
         \ 'new_branch': 'cb',
         \ 'branch_delete': 'd',
         \ 'checkout_branch': 'co',
+        \ 'merge_branch': 'M',
+        \ 'merge_abort': 'A',
         \ 'apply_branch': '<CR>',
         \ 'cycle_next': '<Tab>',
         \ 'cycle_prev': '<S-Tab>',
@@ -758,6 +771,8 @@ function! s:init_branch_buffer(state) abort
   call s:map_keys('refresh', ':<C-u>call ' . s:sid . 'refresh_all()<CR>')
   call s:map_fixed('?', ':<C-u>call ' . s:sid . 'toggle_branch_help()<CR>')
   call s:map_keys('checkout_branch', ':<C-u>call ' . s:sid . 'checkout_branch()<CR>')
+  call s:map_keys('merge_branch', ':<C-u>call ' . s:sid . 'merge_branch()<CR>')
+  call s:map_keys('merge_abort', ':<C-u>call ' . s:sid . 'merge_abort()<CR>')
   call s:map_keys('apply_branch', ':<C-u>call ' . s:sid . 'apply_branch()<CR>')
   call s:map_keys('cycle_next', ':<C-u>call ' . s:sid . 'cycle_pane(1)<CR>')
   call s:map_keys('cycle_prev', ':<C-u>call ' . s:sid . 'cycle_pane(-1)<CR>')
@@ -1179,7 +1194,11 @@ function! s:prompt_input(prompt, ...) abort
     unlet g:git_changes_input_override
     return value
   endif
-  return a:0 ? input(a:prompt, a:1) : input(a:prompt)
+  let text = a:0 ? a:1 : ''
+  if a:0 > 1 && !empty(a:2)
+    return input(a:prompt, text, a:2)
+  endif
+  return input(a:prompt, text)
 endfunction
 
 function! s:has_staged_changes(root, paths) abort
@@ -2458,7 +2477,8 @@ function! s:apply_branches(state, select_name, on_done, result) abort
           \ '# ' . km.new_branch . ':new ' . km.commit . ':commit '
           \     . km.commit_editor . ':edit',
           \ '# ' . km.pull . ':pull ' . km.push . ':push '
-          \     . km.checkout_branch . ':checkout',
+          \     . km.checkout_branch . ':checkout '
+          \     . km.merge_branch . ':merge ' . km.merge_abort . ':abort',
           \ '# ' . km.branch_delete . ':delete ' . km.copy_branch
           \     . ':copy ?:hide',
           \ ])
@@ -2576,6 +2596,79 @@ function! s:checkout_branch() abort
 
   echomsg 'Switched to branch: ' . branch.name
   execute 'GitChanges'
+endfunction
+
+function! s:merge_root(root, branch, ...) abort
+  let state = a:0 ? a:1 : s:find_state_for_root(a:root)
+  let current = s:current_branch(a:root)
+
+  if get(g:, 'git_changes_confirm_branch_merge', 1)
+        \ && s:prompt_confirm(
+        \      'Merge branch ' . a:branch . ' into ' . current . '?',
+        \      "&Yes\n&No", 2) != 1
+    call s:report(state, 'Merge cancelled', 'info')
+    return
+  endif
+
+  call s:report(state, 'Merging ' . a:branch . '...', 'busy')
+
+  let result = s:git_run(a:root, 'merge --no-edit ' . shellescape(a:branch))
+  if !empty(state)
+    call s:reload_current_branch(state)
+  endif
+
+  if !result.ok
+    call s:report(state,
+          \ 'Merge failed: ' . s:output_message(result.out), 'error')
+    return
+  endif
+  call s:report(state, 'Merged branch: ' . a:branch, 'info')
+endfunction
+
+function! s:merge_branch() abort
+  let state = s:cur_state()
+  if empty(state)
+    return
+  endif
+  let branch = s:selected_branch(state)
+  if empty(branch)
+    call s:err('select a branch first')
+    return
+  endif
+  if branch.current
+    call s:err('cannot merge the current branch into itself')
+    return
+  endif
+
+  call s:merge_root(state.root, branch.name, state)
+endfunction
+
+function! s:abort_merge_root(root, ...) abort
+  let state = a:0 ? a:1 : s:find_state_for_root(a:root)
+  if s:git_in_progress(a:root) !=# 'MERGE_HEAD'
+    call s:report(state, 'No merge in progress', 'info')
+    return
+  endif
+
+  let result = s:git_run(a:root, 'merge --abort')
+  if !empty(state)
+    call s:reload_current_branch(state)
+  endif
+
+  if !result.ok
+    call s:report(state,
+          \ 'Merge abort failed: ' . s:output_message(result.out), 'error')
+    return
+  endif
+  call s:report(state, 'Merge aborted', 'info')
+endfunction
+
+function! s:merge_abort() abort
+  let state = s:cur_state()
+  if empty(state)
+    return
+  endif
+  call s:abort_merge_root(state.root, state)
 endfunction
 
 function! s:copy_branch_name() abort
@@ -5021,6 +5114,85 @@ function! git_changes#push() abort
     return
   endif
   call s:push_root(root, s:find_state_for_root(root))
+endfunction
+
+function! s:refresh_state_for_root(root) abort
+  let state = s:find_state_for_root(a:root)
+  if !empty(state)
+    call s:reload_current_branch(state)
+  endif
+endfunction
+
+function! git_changes#branch_create(...) abort
+  let root = s:repo_root()
+  if empty(root)
+    call s:err('not inside a Git repository')
+    return
+  endif
+
+  let name = a:0 ? trim(a:1) : trim(s:prompt_input('New branch name: '))
+  if empty(name)
+    echomsg 'Branch creation cancelled'
+    return
+  endif
+
+  if !s:git_do(root, 'checkout -b ' . shellescape(name))
+    return
+  endif
+
+  echomsg 'Created branch: ' . name
+  call s:refresh_state_for_root(root)
+endfunction
+
+function! git_changes#branch_checkout(...) abort
+  let root = s:repo_root()
+  if empty(root)
+    call s:err('not inside a Git repository')
+    return
+  endif
+
+  let name = a:0 ? trim(a:1)
+        \ : trim(s:prompt_input('Branch: ', '',
+        \       'customlist,git_changes#complete_branches'))
+  if empty(name)
+    echomsg 'Branch checkout cancelled'
+    return
+  endif
+
+  if !s:git_do(root, 'checkout ' . shellescape(name))
+    return
+  endif
+
+  echomsg 'Switched to branch: ' . name
+  call s:refresh_state_for_root(root)
+endfunction
+
+function! git_changes#branch_merge(...) abort
+  let root = s:repo_root()
+  if empty(root)
+    call s:err('not inside a Git repository')
+    return
+  endif
+
+  let name = a:0 ? trim(a:1)
+        \ : trim(s:prompt_input('Merge branch: ', '',
+        \       'customlist,git_changes#complete_branches'))
+  if empty(name)
+    echomsg 'Branch merge cancelled'
+    return
+  endif
+
+  call s:merge_root(root, name)
+endfunction
+
+function! git_changes#branch_merge_abort() abort
+  let root = s:repo_root()
+  if empty(root)
+    call s:err('not inside a Git repository')
+    return
+  endif
+
+  call s:abort_merge_root(root)
 endfunction
 
 

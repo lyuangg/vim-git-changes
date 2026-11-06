@@ -98,6 +98,18 @@ toggle one fold, or set `g:git_changes_fold = 0` to keep everything expanded.
 " Pull or push the current branch
 :GitChangesPull
 :GitChangesPush
+
+" Create and switch to a new branch
+:GitChangesBranchCreate feature
+
+" Switch to an existing branch
+:GitChangesBranchCheckout main
+
+" Merge a branch into the current branch
+:GitChangesBranchMerge feature
+
+" Abort an in-progress merge (for example after a conflict)
+:GitChangesBranchMergeAbort
 ```
 
 ### Statusline
@@ -212,6 +224,8 @@ value synchronously.
 | `j` / `k` | Move branch selection without changing the other panes |
 | `<CR>` | Show the selected branch's commits and files |
 | `co` | Check out the selected branch |
+| `M` | Merge the selected branch into the current branch |
+| `A` | Abort an in-progress merge |
 | `cb` | Create a branch from the selected branch and switch to it |
 | `d` | Delete the selected local branch |
 | `yy` | Copy the branch name |
@@ -285,6 +299,9 @@ let g:git_changes_confirm_discard = 1
 " Confirm before deleting a branch
 let g:git_changes_confirm_branch_delete = 1
 
+" Confirm before merging a branch (0 = merge immediately)
+let g:git_changes_confirm_branch_merge = 1
+
 " Confirm before rewriting an older commit without a remote
 let g:git_changes_confirm_rewrite = 1
 
@@ -346,6 +363,8 @@ let g:git_changes_keymaps = {
 | `new_branch` | `cb` |
 | `branch_delete` | `d` |
 | `checkout_branch` | `co` |
+| `merge_branch` | `M` |
+| `merge_abort` | `A` |
 | `apply_branch` | `<CR>` |
 | `cycle_next` | `<Tab>` |
 | `cycle_prev` | `<S-Tab>` |

@@ -32,6 +32,12 @@ command! -nargs=? -complete=customlist,git_changes#complete_commit GitChangesCom
       \ call git_changes#commit(<q-args>)
 command! -bar GitChangesPull call git_changes#pull()
 command! -bar GitChangesPush call git_changes#push()
+command! -nargs=? GitChangesBranchCreate call git_changes#branch_create(<q-args>)
+command! -nargs=? -complete=customlist,git_changes#complete_branches
+      \ GitChangesBranchCheckout call git_changes#branch_checkout(<q-args>)
+command! -nargs=? -complete=customlist,git_changes#complete_branches
+      \ GitChangesBranchMerge call git_changes#branch_merge(<q-args>)
+command! -bar GitChangesBranchMergeAbort call git_changes#branch_merge_abort()
 command! -bar GitChangesBlame call git_changes#blame()
 command! -nargs=? -complete=file GitChangesStage call git_changes#stage(<q-args>)
 command! -nargs=? -complete=file GitChangesUnstage call git_changes#unstage(<q-args>)

@@ -95,6 +95,18 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 " pull / push 当前分支
 :GitChangesPull
 :GitChangesPush
+
+" 创建并切换到新分支
+:GitChangesBranchCreate feature
+
+" 切换到已有分支
+:GitChangesBranchCheckout main
+
+" 把指定分支合并到当前分支
+:GitChangesBranchMerge feature
+
+" 撤销正在进行的合并（例如合并冲突后）
+:GitChangesBranchMergeAbort
 ```
 
 ### 状态栏
@@ -207,6 +219,8 @@ set statusline+=%{GitChangesBlameLine()}
 | `j` / `k` | 移动分支选择，不改变其他窗口 |
 | `<CR>` | 显示所选分支的 commit 和文件 |
 | `co` | checkout 所选分支 |
+| `M` | 把所选分支合并到当前分支 |
+| `A` | 撤销正在进行的合并 |
 | `cb` | 从所选分支新建分支并切换过去 |
 | `d` | 删除所选本地分支 |
 | `yy` | 复制分支名 |
@@ -265,6 +279,9 @@ let g:git_changes_confirm_discard = 1
 
 " 删除分支前是否确认
 let g:git_changes_confirm_branch_delete = 1
+
+" 合并分支前是否确认（0 = 直接合并）
+let g:git_changes_confirm_branch_merge = 1
 
 " 没有 remote 时重写旧 commit 前是否确认
 let g:git_changes_confirm_rewrite = 1
@@ -326,6 +343,8 @@ let g:git_changes_keymaps = {
 | `new_branch` | `cb` |
 | `branch_delete` | `d` |
 | `checkout_branch` | `co` |
+| `merge_branch` | `M` |
+| `merge_abort` | `A` |
 | `apply_branch` | `<CR>` |
 | `cycle_next` | `<Tab>` |
 | `cycle_prev` | `<S-Tab>` |
