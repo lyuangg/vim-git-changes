@@ -1168,13 +1168,13 @@ function! s:git_do(root, args) abort
   return 1
 endfunction
 
-function! s:prompt_input(prompt) abort
+function! s:prompt_input(prompt, ...) abort
   if exists('g:git_changes_input_override')
     let value = g:git_changes_input_override
     unlet g:git_changes_input_override
     return value
   endif
-  return input(a:prompt)
+  return a:0 ? input(a:prompt, a:1) : input(a:prompt)
 endfunction
 
 function! s:has_staged_changes(root, paths) abort
@@ -1834,9 +1834,13 @@ function! s:commit_index(root, ...) abort
     return 0
   endif
 
-  let message = a:0 && !empty(trim(a:1))
-        \ ? trim(a:1)
-        \ : trim(s:prompt_input('Commit message: '))
+  if a:0 && !empty(trim(a:1))
+    let message = trim(a:1)
+  else
+    let prepared = s:prepared_commit_message(a:root)
+    let message = trim(s:prompt_input('Commit message: ',
+          \ empty(prepared) ? '' : join(prepared, ' ')))
+  endif
   if empty(message)
     echomsg 'Commit cancelled'
     return 0
@@ -1863,15 +1867,99 @@ function! s:commit_current() abort
   call s:reload_current_branch(state)
 endfunction
 
+" Git writes the prepared commit message for merges, cherry-picks, rebases, and
+" reverts to .git/MERGE_MSG, including the "Conflicts:" comment block.
+function! s:merge_message_lines(root) abort
+  let gitdir = s:git_one(a:root, 'rev-parse --absolute-git-dir')
+  if empty(gitdir)
+    return []
+  endif
+  let path = gitdir . '/MERGE_MSG'
+  return filereadable(path) ? readfile(path) : []
+endfunction
+
+" Remove comment lines and surrounding blank lines so the prepared message can
+" be passed to git commit -m.
+function! s:prepared_commit_message(root) abort
+  if empty(s:git_in_progress(a:root))
+    return []
+  endif
+
+  let lines = filter(s:merge_message_lines(a:root), 'v:val !~# "^#"')
+  while !empty(lines) && empty(trim(lines[-1]))
+    call remove(lines, -1)
+  endwhile
+  while !empty(lines) && empty(trim(lines[0]))
+    call remove(lines, 0)
+  endwhile
+  return lines
+endfunction
+
 function! s:commit_template(state) abort
-  let lines = [
-        \ '',
+  let root = a:state.root
+  let in_progress = s:git_in_progress(root)
+  let lines = empty(in_progress) ? [] : s:merge_message_lines(root)
+  while !empty(lines) && empty(trim(lines[-1]))
+    call remove(lines, -1)
+  endwhile
+
+  if empty(lines)
+    let lines = ['']
+  else
+    call add(lines, '#')
+    if in_progress ==# 'MERGE_HEAD'
+      call extend(lines, [
+            \ '# It looks like you may be committing a merge.',
+            \ '# If this is not correct, please run',
+            \ "#\tgit update-ref -d MERGE_HEAD",
+            \ '# and try again.',
+            \ '',
+            \ '',
+            \ ])
+    elseif in_progress ==# 'CHERRY_PICK_HEAD'
+      call extend(lines, [
+            \ '# It looks like you may be committing a cherry-pick.',
+            \ '# If this is not correct, please run',
+            \ "#\tgit update-ref -d CHERRY_PICK_HEAD",
+            \ '# and try again.',
+            \ '',
+            \ '',
+            \ ])
+    elseif in_progress ==# 'REVERT_HEAD'
+      call extend(lines, [
+            \ '# It looks like you may be committing a revert.',
+            \ '# If this is not correct, please run',
+            \ "#\tgit update-ref -d REVERT_HEAD",
+            \ '# and try again.',
+            \ '',
+            \ '',
+            \ ])
+    endif
+  endif
+
+  call extend(lines, [
         \ '# Please enter the commit message for your changes. Lines starting',
         \ '# with ''#'' will be ignored, and an empty message aborts the commit.',
         \ '#',
-        \ '# On branch ' . s:current_branch(a:state.root),
-        \ '# Changes to be committed:',
-        \ ]
+        \ '# On branch ' . s:current_branch(root),
+        \ ])
+
+  if in_progress ==# 'MERGE_HEAD'
+    if empty(s:git(root, 'diff --name-only --diff-filter=U'))
+      call add(lines, '# All conflicts fixed but you are still merging.')
+      call add(lines, '#')
+    endif
+  elseif in_progress ==# 'CHERRY_PICK_HEAD'
+    let sha = s:git_one(root, 'rev-parse --short CHERRY_PICK_HEAD')
+    call add(lines, '# You are currently cherry-picking commit ' . sha . '.')
+    call add(lines, '#')
+  elseif in_progress ==# 'REVERT_HEAD'
+    let sha = s:git_one(root, 'rev-parse --short REVERT_HEAD')
+    call add(lines, '# You are currently reverting commit ' . sha . '.')
+    call add(lines, '#')
+  endif
+
+  call add(lines, '# Changes to be committed:')
 
   let labels = {
         \ 'M': 'modified',
@@ -1882,7 +1970,7 @@ function! s:commit_template(state) abort
         \ 'T': 'typechange',
         \ 'U': 'unmerged',
         \ }
-  for line in s:git(a:state.root,
+  for line in s:git(root,
         \ 'diff --cached --name-status --find-renames')
     let parts = split(line, "\t", 1)
     if empty(parts)
