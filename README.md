@@ -179,6 +179,14 @@ value synchronously.
 | `]c` / `[c` | Jump to the next / previous hunk |
 | `zo` / `zc` | Open / close a fold |
 | `zR` / `zM` | Open / close all folds |
+| `q` | Close the diff tab |
+| `r` | Refresh the diff |
+| `s` / `u` / `-` | Stage / unstage / toggle the file (read-only panes) |
+| `D` | Discard unstaged changes (read-only panes) |
+| `dS` | Toggle the staged view (read-only panes) |
+| `cc` / `C` | Commit, or commit with an editor (read-only panes) |
+| `o` | Open the file in a tab (read-only panes) |
+| `Tab` / `S-Tab` | Move to the new / old pane (read-only panes) |
 
 ### File list
 

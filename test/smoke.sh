@@ -1,0 +1,213 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+plugin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo="$(mktemp -d "${TMPDIR:-/tmp}/vim-git-changes-smoke.XXXXXX")"
+other="$(mktemp -d "${TMPDIR:-/tmp}/vim-git-changes-smoke-other.XXXXXX")"
+script="$(mktemp "${TMPDIR:-/tmp}/vim-git-changes-smoke-vim.XXXXXX")"
+out="$(mktemp -d "${TMPDIR:-/tmp}/vim-git-changes-smoke-out.XXXXXX")"
+
+cleanup() { rm -rf "$repo" "$other" "$script" "$out"; }
+trap cleanup EXIT
+
+if [ -z "${VIM_BIN:-}" ]; then
+  if command -v vim >/dev/null 2>&1; then VIM_BIN=vim; else VIM_BIN=nvim; fi
+fi
+
+(
+  cd "$other"
+  git init -q
+  git config user.name "other"
+  git config user.email "other@example.com"
+  printf 'other\n' > other.txt
+  git add other.txt
+  git commit -qm 'other'
+)
+
+cd "$repo"
+git init -q
+git config user.name "smoke"
+git config user.email "smoke@example.com"
+printf 'alpha\nbeta\ngamma\n' > a.txt
+printf 'one\ntwo\n' > b.txt
+git add a.txt b.txt
+git commit -qm 'first'
+printf 'alpha\nBETA\ngamma\n' > a.txt
+printf 'one\nTWO\n' > b.txt
+git add b.txt
+
+cat > "$script" <<'VIM'
+set nocompatible
+set noswapfile
+let &runtimepath = $GC_PLUGIN . ',' . &runtimepath
+runtime plugin/git_changes.vim
+execute 'cd ' . fnameescape($GC_REPO)
+let g:out = $GC_OUT
+let g:repo = $GC_REPO
+let g:other = $GC_OTHER
+let g:git_changes_statusline_delay = 0
+
+function! WaitMain() abort
+  let n = 0
+  while n < 200
+    if exists('t:git_changes') && !empty(t:git_changes)
+      let st = t:git_changes
+      if !has_key(st, 'job_commits-log') && !has_key(st, 'job_branches')
+            \ && !has_key(st, 'job_files') && !has_key(st, 'job_files-body')
+        break
+      endif
+    endif
+    sleep 20m
+    let n += 1
+  endwhile
+  sleep 100m
+endfunction
+
+function! WaitDiff() abort
+  let n = 0
+  while n < 200
+    if exists('t:git_changes_file_diff') && !empty(t:git_changes_file_diff)
+      let st = t:git_changes_file_diff
+      if !has_key(st, 'job_diff-old') && !has_key(st, 'job_diff-new')
+        break
+      endif
+    endif
+    sleep 20m
+    let n += 1
+  endwhile
+  sleep 100m
+endfunction
+
+let result = []
+function! Check(name, ok, detail) abort
+  call add(g:result, (a:ok ? 'ok  ' : 'FAIL') . ' ' . a:name . (a:ok ? '' : ': ' . a:detail))
+endfunction
+
+" --- statusline and blame -------------------------------------------------
+edit a.txt
+let sl = git_changes#statusline()
+call Check('statusline', sl =~# '^\[Git(' , sl)
+
+let info = git_changes#blame_line_info()
+call Check('blame sync author', get(info, 'author', '') ==# 'smoke', string(info))
+call Check('blame sync sha', strlen(get(info, 'sha', '')) == 8, string(info))
+
+let a1 = git_changes#blame_line_async()
+let a2 = ''
+for i in range(40)
+  sleep 100m
+  let a2 = git_changes#blame_line_async()
+  if !empty(a2)
+    break
+  endif
+endfor
+call Check('blame async', a2 =~# 'smoke', a2)
+
+" --- blame pane -----------------------------------------------------------
+GitChangesBlame
+let bp = get(b:, 'git_changes_blame', {})
+call Check('blame pane opened', !empty(bp) && bp.path ==# 'a.txt', string(bp))
+for i in range(50)
+  if empty(get(get(bp, 'state', {}), 'job_blame_pane', 0))
+    break
+  endif
+  sleep 100m
+endfor
+let pane_lines = getbufline(bp.buf, 1, '$')
+call Check('blame pane content', join(pane_lines, ' ') =~# 'smoke',
+      \ join(pane_lines, ' '))
+call win_gotoid(bp.win)
+normal q
+call Check('blame pane closes', empty(getwininfo(bp.win)), 'window still exists')
+
+" --- main view ------------------------------------------------------------
+GitChanges
+call WaitMain()
+let st = t:git_changes
+call Check('main commits loaded', len(st.commits) >= 2, len(st.commits))
+call Check('main files loaded', len(st.files) == 2,
+      \ len(st.files) . ' [' . join(map(copy(st.files), 'v:val.path'), ',') . ']')
+
+call win_gotoid(st.files_win)
+call Check('files map stage', !empty(maparg('s', 'n')), 's')
+call Check('files map refresh', !empty(maparg('r', 'n')), 'r')
+call Check('files map diff', !empty(maparg('gd', 'n')), 'gd')
+
+" Exercise the generated stage/unstage mapping arguments.
+normal s
+let staged = systemlist(['git', '-C', g:repo, 'diff', '--cached', '--name-only'])
+call Check('main stage key', index(staged, 'a.txt') >= 0, join(staged, ','))
+normal u
+let staged = systemlist(['git', '-C', g:repo, 'diff', '--cached', '--name-only'])
+call Check('main unstage key', index(staged, 'a.txt') < 0, join(staged, ','))
+
+" statusline text should be set for the files pane
+let pane_sl = getwinvar(st.files_win, '&statusline')
+call Check('pane statusline', pane_sl =~# 'Files', pane_sl)
+
+GitChangesQuit
+call Check('main quit', !exists('t:git_changes'), 'tab still open')
+
+" --- file diff ------------------------------------------------------------
+GitChangesDiff
+call WaitDiff()
+let fd = t:git_changes_file_diff
+call Check('filediff old content', len(getbufline(fd.old_buf, 1, '$')) == 3,
+      \ len(getbufline(fd.old_buf, 1, '$')))
+call Check('filediff new content', len(getbufline(fd.new_buf, 1, '$')) == 3,
+      \ len(getbufline(fd.new_buf, 1, '$')))
+
+call win_gotoid(fd.old_win)
+call Check('filediff old q', maparg('q', 'n') =~# 'close_file_diff_tab', maparg('q', 'n'))
+call Check('filediff old s', maparg('s', 'n') =~# 'stage_file_diff', maparg('s', 'n'))
+call Check('filediff old D', maparg('D', 'n') =~# 'discard_file_diff', maparg('D', 'n'))
+call Check('filediff old Tab', maparg('<Tab>', 'n') =~# 'cycle_file_diff', maparg('<Tab>', 'n'))
+
+call win_gotoid(fd.new_win)
+call Check('filediff new q', maparg('q', 'n') =~# 'close_file_diff_tab', maparg('q', 'n'))
+call Check('filediff new s untouched', empty(maparg('s', 'n')), maparg('s', 'n'))
+call Check('filediff new u untouched', empty(maparg('u', 'n')), maparg('u', 'n'))
+
+execute 'GitChangesDiffQuit'
+call Check('filediff quit', !exists('t:git_changes_file_diff'), 'tab still open')
+
+" --- repository root follows the buffer, not cwd ---------------------------
+execute 'cd ' . fnameescape(g:other)
+execute 'edit ' . fnameescape(g:repo . '/a.txt')
+call git_changes#stage()
+let staged = systemlist(['git', '-C', g:repo, 'diff', '--cached', '--name-only'])
+call Check('stage uses buffer repo', index(staged, 'a.txt') >= 0, join(staged, ','))
+let other_status = systemlist(['git', '-C', g:other, 'status', '--porcelain'])
+call Check('stage leaves cwd repo alone', empty(other_status), join(other_status, ','))
+
+" Unstage again, then exercise the file diff stage key. The explicit path is
+" resolved from the repository root when cwd is another repository.
+call git_changes#unstage()
+GitChangesDiff -- a.txt
+call WaitDiff()
+let fd = t:git_changes_file_diff
+call Check('filediff path from other cwd', fd.spec.path ==# 'a.txt', fd.spec.path)
+call win_gotoid(fd.old_win)
+let v:errmsg = ''
+let map_s = maparg('s', 'n')
+normal s
+sleep 150m
+let staged = systemlist(['git', '-C', g:repo, 'diff', '--cached', '--name-only'])
+call Check('filediff stage key', index(staged, 'a.txt') >= 0,
+      \ join(staged, ',') . ' map=' . map_s . ' err=' . v:errmsg
+      \ . ' msgs=' . join(split(execute('messages'), "\n"), ' / '))
+execute 'GitChangesDiffQuit'
+
+call writefile(g:result, g:out . '/result.txt')
+let v:errmsg = ''
+qa!
+VIM
+
+GC_PLUGIN="$plugin_dir" GC_REPO="$repo" GC_OTHER="$other" GC_OUT="$out" \
+  "$VIM_BIN" -Nu NONE -es -S "$script" >/dev/null 2>&1 || true
+
+cat "$out/result.txt"
+if grep -q '^FAIL' "$out/result.txt"; then
+  exit 1
+fi
+echo "ok: smoke tests passed ($VIM_BIN)"

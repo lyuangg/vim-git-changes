@@ -183,8 +183,8 @@ function! git_changes#complete_refs(arglead, cmdline, cursorpos) abort
 
   let refs = ['HEAD']
   call extend(refs, s:git(root,
-        \ 'for-each-ref ' . shellescape('--format=%(refname:short)')
-        \ . ' refs/heads refs/tags refs/remotes'))
+        \ ['for-each-ref', '--format=%(refname:short)',
+        \  'refs/heads', 'refs/tags', 'refs/remotes']))
 
   let result = []
   let seen = {}
@@ -204,8 +204,8 @@ function! git_changes#complete_branches(arglead, cmdline, cursorpos) abort
   endif
 
   return filter(s:git(root,
-        \ 'for-each-ref ' . shellescape('--format=%(refname:short)')
-        \ . ' refs/heads'), 'stridx(v:val, a:arglead) == 0')
+        \ ['for-each-ref', '--format=%(refname:short)', 'refs/heads']),
+        \ 'stridx(v:val, a:arglead) == 0')
 endfunction
 
 function! s:truncate(text, max) abort
@@ -215,44 +215,73 @@ function! s:truncate(text, max) abort
   return strcharpart(a:text, 0, a:max - 3) . '...'
 endfunction
 
+let s:repo_root_cache = {}
+
+" Worktree root for {dir}, found without spawning git: walk up until a .git
+" directory or file is found. Used for the current buffer's repository rather
+" than the working directory, so commands work when Vim's cwd is in a different
+" repository. The result is cached per directory.
+function! s:repo_root_for(dir) abort
+  let dir = simplify(fnamemodify(a:dir, ':p'))
+  while len(dir) > 1 && dir[-1:] ==# '/'
+    let dir = dir[:-2]
+  endwhile
+  if has_key(s:repo_root_cache, dir)
+    return s:repo_root_cache[dir]
+  endif
+
+  let current = dir
+  let result = ''
+  while 1
+    if isdirectory(current . '/.git') || filereadable(current . '/.git')
+      let result = current
+      break
+    endif
+    let parent = fnamemodify(current, ':h')
+    if parent ==# current
+      break
+    endif
+    let current = parent
+  endwhile
+
+  let s:repo_root_cache[dir] = result
+  if len(s:repo_root_cache) > 200
+    call filter(s:repo_root_cache, 'v:val !=# ""')
+    if len(s:repo_root_cache) > 200
+      let s:repo_root_cache = {}
+    endif
+  endif
+  return result
+endfunction
+
 function! s:repo_root() abort
   let state = get(b:, 'git_changes', {})
   if !empty(state) && !empty(get(state, 'root', ''))
     return state.root
   endif
 
-  " A buffer opened through a symlink is edited as its target file. Prefer
-  " the target's repository over the working directory, which may be another
-  " repository entirely.
+  " A buffer opened through a symlink is edited as its target file. Always
+  " prefer the file's repository over the working directory, which may be
+  " another repository entirely.
   let file = expand('%:p')
   if !empty(file) && &buftype ==# ''
-    let real = resolve(file)
-    if real !=# file
-      let [root, path] = s:buffer_repo_path()
+    let root = s:repo_root_for(fnamemodify(resolve(file), ':h'))
+    if !empty(root)
       return root
     endif
   endif
 
-  let out = systemlist('git rev-parse --show-toplevel 2>&1')
-  if !v:shell_error && !empty(out)
-    return out[0]
-  endif
-
-  if !empty(file)
-    let dir = fnamemodify(file, ':h')
-    let out = systemlist('git -C ' . shellescape(dir)
-          \ . ' rev-parse --show-toplevel 2>&1')
-    if !v:shell_error && !empty(out)
-      return out[0]
-    endif
-  endif
-
-  return ''
+  return s:repo_root_for(getcwd())
 endfunction
 
 function! s:git(root, args) abort
-  let cmd = 'git --no-pager -c core.quotePath=false -C '
-        \ . shellescape(a:root) . ' ' . a:args
+  if type(a:args) == type([])
+    let cmd = ['git', '--no-pager', '-c', 'core.quotePath=false',
+          \ '-C', a:root] + a:args
+  else
+    let cmd = 'git --no-pager -c core.quotePath=false -C '
+          \ . shellescape(a:root) . ' ' . a:args
+  endif
   let out = systemlist(cmd)
   if v:shell_error
     return []
@@ -672,22 +701,37 @@ function! s:map_keys(action, rhs) abort
   endfor
 endfunction
 
+" Map a configurable action to a script-local function call. Keeping the
+" <SID> concatenation in one place avoids repeating the same fragile string
+" construction at every call site.
+function! s:map_action(action, func, ...) abort
+  let args = join(a:000, ', ')
+  call s:map_keys(a:action,
+        \ ':<C-u>call ' . s:sid . a:func . '(' . args . ')<CR>')
+endfunction
+
+function! s:map_fixed_action(key, func, ...) abort
+  let args = join(a:000, ', ')
+  call s:map_fixed(a:key,
+        \ ':<C-u>call ' . s:sid . a:func . '(' . args . ')<CR>')
+endfunction
+
 function! s:map_quit() abort
   call s:map_keys('quit', ':<C-u>GitChangesQuit<CR>')
 endfunction
 
 function! s:map_left_pane_keys() abort
-  call s:map_keys('pane_files', ':<C-u>call ' . s:sid . 'goto_left_pane(1)<CR>')
-  call s:map_keys('pane_commits', ':<C-u>call ' . s:sid . 'goto_left_pane(2)<CR>')
-  call s:map_keys('pane_branches', ':<C-u>call ' . s:sid . 'goto_left_pane(3)<CR>')
+  call s:map_action('pane_files', 'goto_left_pane', 1)
+  call s:map_action('pane_commits', 'goto_left_pane', 2)
+  call s:map_action('pane_branches', 'goto_left_pane', 3)
 endfunction
 
 function! s:map_left_action_keys() abort
-  call s:map_keys('commit', ':<C-u>call ' . s:sid . 'commit_current()<CR>')
-  call s:map_keys('commit_editor', ':<C-u>call ' . s:sid . 'commit_with_editor()<CR>')
-  call s:map_keys('pull', ':<C-u>call ' . s:sid . 'pull_current()<CR>')
-  call s:map_keys('push', ':<C-u>call ' . s:sid . 'push_current()<CR>')
-  call s:map_keys('new_branch', ':<C-u>call ' . s:sid . 'new_branch()<CR>')
+  call s:map_action('commit', 'commit_current')
+  call s:map_action('commit_editor', 'commit_with_editor')
+  call s:map_action('pull', 'pull_current')
+  call s:map_action('push', 'push_current')
+  call s:map_action('new_branch', 'new_branch')
 endfunction
 
 function! s:map_open_main() abort
@@ -700,40 +744,40 @@ function! s:init_list_buffer(state, kind) abort
 
   call s:setup_list_window()
 
-  call s:map_fixed('j', ':<C-u>call ' . s:sid . 'move_cursor(1)<CR>')
-  call s:map_fixed('k', ':<C-u>call ' . s:sid . 'move_cursor(-1)<CR>')
-  call s:map_fixed('<Down>', ':<C-u>call ' . s:sid . 'move_cursor(1)<CR>')
-  call s:map_fixed('<Up>', ':<C-u>call ' . s:sid . 'move_cursor(-1)<CR>')
-  call s:map_fixed('J', ':<C-u>call ' . s:sid . 'scroll_diff(1)<CR>')
-  call s:map_fixed('K', ':<C-u>call ' . s:sid . 'scroll_diff(-1)<CR>')
-  call s:map_keys('refresh', ':<C-u>call ' . s:sid . 'refresh_all()<CR>')
-  call s:map_keys('cycle_next', ':<C-u>call ' . s:sid . 'cycle_pane(1)<CR>')
-  call s:map_keys('cycle_prev', ':<C-u>call ' . s:sid . 'cycle_pane(-1)<CR>')
+  call s:map_fixed_action('j', 'move_cursor', 1)
+  call s:map_fixed_action('k', 'move_cursor', -1)
+  call s:map_fixed_action('<Down>', 'move_cursor', 1)
+  call s:map_fixed_action('<Up>', 'move_cursor', -1)
+  call s:map_fixed_action('J', 'scroll_diff', 1)
+  call s:map_fixed_action('K', 'scroll_diff', -1)
+  call s:map_action('refresh', 'refresh_all')
+  call s:map_action('cycle_next', 'cycle_pane', 1)
+  call s:map_action('cycle_prev', 'cycle_pane', -1)
   call s:map_left_pane_keys()
   call s:map_left_action_keys()
   call s:map_open_main()
-  call s:map_keys('worktree', ':<C-u>call ' . s:sid . 'goto_worktree()<CR>')
+  call s:map_action('worktree', 'goto_worktree')
 
   if a:kind ==# 'files'
-    call s:map_keys('toggle_tree', ':<C-u>call ' . s:sid . 'toggle_tree()<CR>')
-    call s:map_fixed('?', ':<C-u>call ' . s:sid . 'toggle_help()<CR>')
-    call s:map_keys('stage', ':<C-u>call ' . s:sid . 'stage_current("stage")<CR>')
-    call s:map_keys('unstage', ':<C-u>call ' . s:sid . 'stage_current("unstage")<CR>')
-    call s:map_keys('stage_all', ':<C-u>call ' . s:sid . 'stage_all()<CR>')
-    call s:map_keys('unstage_all', ':<C-u>call ' . s:sid . 'unstage_all()<CR>')
-    call s:map_keys('toggle_stage', ':<C-u>call ' . s:sid . 'stage_current("toggle")<CR>')
-    call s:map_keys('file_discard', ':<C-u>call ' . s:sid . 'discard_current()<CR>')
-    call s:map_keys('open_file', ':<C-u>call ' . s:sid . 'open_file()<CR>')
-    call s:map_keys('diff_file', ':<C-u>call ' . s:sid . 'open_file_diff_for_current()<CR>')
-    call s:map_keys('scroll_half_down', ':<C-u>call ' . s:sid . 'scroll_diff_half(1)<CR>')
-    call s:map_keys('scroll_half_up', ':<C-u>call ' . s:sid . 'scroll_diff_half(-1)<CR>')
-    call s:map_keys('copy_file', ':<C-u>call ' . s:sid . 'copy_file_path()<CR>')
-    call s:map_keys('diff_left', ':<C-u>call ' . s:sid . 'scroll_diff_horizontal(-1)<CR>')
-    call s:map_keys('diff_right', ':<C-u>call ' . s:sid . 'scroll_diff_horizontal(1)<CR>')
+    call s:map_action('toggle_tree', 'toggle_tree')
+    call s:map_fixed_action('?', 'toggle_help')
+    call s:map_action('stage', 'stage_current', '"stage"')
+    call s:map_action('unstage', 'stage_current', '"unstage"')
+    call s:map_action('stage_all', 'stage_all')
+    call s:map_action('unstage_all', 'unstage_all')
+    call s:map_action('toggle_stage', 'stage_current', '"toggle"')
+    call s:map_action('file_discard', 'discard_current')
+    call s:map_action('open_file', 'open_file')
+    call s:map_action('diff_file', 'open_file_diff_for_current')
+    call s:map_action('scroll_half_down', 'scroll_diff_half', 1)
+    call s:map_action('scroll_half_up', 'scroll_diff_half', -1)
+    call s:map_action('copy_file', 'copy_file_path')
+    call s:map_action('diff_left', 'scroll_diff_horizontal', -1)
+    call s:map_action('diff_right', 'scroll_diff_horizontal', 1)
   elseif a:kind ==# 'commits'
-    call s:map_keys('copy_commit', ':<C-u>call ' . s:sid . 'copy_commit_hash()<CR>')
-    call s:map_keys('edit_message', ':<C-u>call ' . s:sid . 'edit_commit_message()<CR>')
-    call s:map_keys('load_more', ':<C-u>call ' . s:sid . 'load_more_commits()<CR>')
+    call s:map_action('copy_commit', 'copy_commit_hash')
+    call s:map_action('edit_message', 'edit_commit_message')
+    call s:map_action('load_more', 'load_more_commits')
   endif
 
   call s:map_quit()
@@ -750,22 +794,22 @@ function! s:init_diff_buffer(state, side) abort
   let b:gc_kind = 'diff'
   let b:gc_side = a:side
   call s:setup_diff_window()
-  call s:map_keys('open_file', ':<C-u>call ' . s:sid . 'open_file()<CR>')
-  call s:map_keys('diff_file', ':<C-u>call ' . s:sid . 'open_file_diff_for_current()<CR>')
-  call s:map_keys('stage', ':<C-u>call ' . s:sid . 'stage_current("stage")<CR>')
-  call s:map_keys('unstage', ':<C-u>call ' . s:sid . 'stage_current("unstage")<CR>')
-  call s:map_keys('stage_all', ':<C-u>call ' . s:sid . 'stage_all()<CR>')
-  call s:map_keys('unstage_all', ':<C-u>call ' . s:sid . 'unstage_all()<CR>')
-  call s:map_keys('toggle_stage', ':<C-u>call ' . s:sid . 'stage_current("toggle")<CR>')
-  call s:map_keys('staged_view', ':<C-u>call ' . s:sid . 'toggle_main_staged_diff()<CR>')
-  call s:map_keys('file_discard_diff', ':<C-u>call ' . s:sid . 'discard_current()<CR>')
-  call s:map_keys('commit', ':<C-u>call ' . s:sid . 'commit_current()<CR>')
-  call s:map_keys('pull', ':<C-u>call ' . s:sid . 'pull_current()<CR>')
-  call s:map_keys('push', ':<C-u>call ' . s:sid . 'push_current()<CR>')
-  call s:map_keys('new_branch', ':<C-u>call ' . s:sid . 'new_branch()<CR>')
-  call s:map_keys('commit_editor', ':<C-u>call ' . s:sid . 'commit_with_editor()<CR>')
-  call s:map_keys('cycle_next', ':<C-u>call ' . s:sid . 'cycle_pane(1)<CR>')
-  call s:map_keys('cycle_prev', ':<C-u>call ' . s:sid . 'cycle_pane(-1)<CR>')
+  call s:map_action('open_file', 'open_file')
+  call s:map_action('diff_file', 'open_file_diff_for_current')
+  call s:map_action('stage', 'stage_current', '"stage"')
+  call s:map_action('unstage', 'stage_current', '"unstage"')
+  call s:map_action('stage_all', 'stage_all')
+  call s:map_action('unstage_all', 'unstage_all')
+  call s:map_action('toggle_stage', 'stage_current', '"toggle"')
+  call s:map_action('staged_view', 'toggle_main_staged_diff')
+  call s:map_action('file_discard_diff', 'discard_current')
+  call s:map_action('commit', 'commit_current')
+  call s:map_action('pull', 'pull_current')
+  call s:map_action('push', 'push_current')
+  call s:map_action('new_branch', 'new_branch')
+  call s:map_action('commit_editor', 'commit_with_editor')
+  call s:map_action('cycle_next', 'cycle_pane', 1)
+  call s:map_action('cycle_prev', 'cycle_pane', -1)
   call s:map_open_main()
   call s:map_quit()
 endfunction
@@ -775,23 +819,23 @@ function! s:init_branch_buffer(state) abort
   let b:gc_kind = 'branches'
   call s:setup_list_window()
 
-  call s:map_fixed('j', ':<C-u>call ' . s:sid . 'move_cursor(1)<CR>')
-  call s:map_fixed('k', ':<C-u>call ' . s:sid . 'move_cursor(-1)<CR>')
-  call s:map_fixed('<Down>', ':<C-u>call ' . s:sid . 'move_cursor(1)<CR>')
-  call s:map_fixed('<Up>', ':<C-u>call ' . s:sid . 'move_cursor(-1)<CR>')
-  call s:map_keys('refresh', ':<C-u>call ' . s:sid . 'refresh_all()<CR>')
-  call s:map_fixed('?', ':<C-u>call ' . s:sid . 'toggle_branch_help()<CR>')
-  call s:map_keys('checkout_branch', ':<C-u>call ' . s:sid . 'checkout_branch()<CR>')
-  call s:map_keys('merge_branch', ':<C-u>call ' . s:sid . 'merge_branch()<CR>')
-  call s:map_keys('merge_abort', ':<C-u>call ' . s:sid . 'merge_abort()<CR>')
-  call s:map_keys('apply_branch', ':<C-u>call ' . s:sid . 'apply_branch()<CR>')
-  call s:map_keys('cycle_next', ':<C-u>call ' . s:sid . 'cycle_pane(1)<CR>')
-  call s:map_keys('cycle_prev', ':<C-u>call ' . s:sid . 'cycle_pane(-1)<CR>')
+  call s:map_fixed_action('j', 'move_cursor', 1)
+  call s:map_fixed_action('k', 'move_cursor', -1)
+  call s:map_fixed_action('<Down>', 'move_cursor', 1)
+  call s:map_fixed_action('<Up>', 'move_cursor', -1)
+  call s:map_action('refresh', 'refresh_all')
+  call s:map_fixed_action('?', 'toggle_branch_help')
+  call s:map_action('checkout_branch', 'checkout_branch')
+  call s:map_action('merge_branch', 'merge_branch')
+  call s:map_action('merge_abort', 'merge_abort')
+  call s:map_action('apply_branch', 'apply_branch')
+  call s:map_action('cycle_next', 'cycle_pane', 1)
+  call s:map_action('cycle_prev', 'cycle_pane', -1)
   call s:map_left_pane_keys()
   call s:map_left_action_keys()
   call s:map_open_main()
-  call s:map_keys('branch_delete', ':<C-u>call ' . s:sid . 'delete_branch()<CR>')
-  call s:map_keys('copy_branch', ':<C-u>call ' . s:sid . 'copy_branch_name()<CR>')
+  call s:map_action('branch_delete', 'delete_branch')
+  call s:map_action('copy_branch', 'copy_branch_name')
   call s:map_quit()
 
   augroup git_changes
@@ -901,15 +945,22 @@ function! s:can_debounce() abort
   return exists('*timer_start') && s:debounce_delay() > 0
 endfunction
 
+function! s:cancel_debounce(state, key) abort
+  let timer = get(a:state, a:key, -1)
+  if timer != -1
+    call timer_stop(timer)
+    let a:state[a:key] = -1
+  endif
+endfunction
+
+function! s:debounce(state, key, delay, Fn) abort
+  call s:cancel_debounce(a:state, a:key)
+  let a:state[a:key] = timer_start(a:delay, a:Fn)
+endfunction
+
 function! s:cancel_pending(state) abort
-  if get(a:state, 'file_timer', -1) != -1
-    call timer_stop(a:state.file_timer)
-    let a:state.file_timer = -1
-  endif
-  if get(a:state, 'commit_timer', -1) != -1
-    call timer_stop(a:state.commit_timer)
-    let a:state.commit_timer = -1
-  endif
+  call s:cancel_debounce(a:state, 'file_timer')
+  call s:cancel_debounce(a:state, 'commit_timer')
 endfunction
 
 function! s:flush_pending(state) abort
@@ -917,8 +968,7 @@ function! s:flush_pending(state) abort
     call s:cancel_pending(a:state)
     call s:apply_commit_select(a:state)
   elseif get(a:state, 'file_timer', -1) != -1
-    call timer_stop(a:state.file_timer)
-    let a:state.file_timer = -1
+    call s:cancel_debounce(a:state, 'file_timer')
     call s:apply_file_diff(a:state)
   endif
 endfunction
@@ -931,10 +981,7 @@ function! s:schedule_file_diff(state) abort
     call s:apply_file_diff(a:state)
     return
   endif
-  if get(a:state, 'file_timer', -1) != -1
-    call timer_stop(a:state.file_timer)
-  endif
-  let a:state.file_timer = timer_start(s:debounce_delay(),
+  call s:debounce(a:state, 'file_timer', s:debounce_delay(),
         \ {-> s:apply_file_diff(a:state)})
 endfunction
 
@@ -965,18 +1012,12 @@ endfunction
 function! s:schedule_commit_select(state, index) abort
   let a:state.commit_index = a:index
   call s:clear_files_state(a:state)
-  if get(a:state, 'file_timer', -1) != -1
-    call timer_stop(a:state.file_timer)
-    let a:state.file_timer = -1
-  endif
+  call s:cancel_debounce(a:state, 'file_timer')
   if !s:can_debounce()
     call s:apply_commit_select(a:state)
     return
   endif
-  if get(a:state, 'commit_timer', -1) != -1
-    call timer_stop(a:state.commit_timer)
-  endif
-  let a:state.commit_timer = timer_start(s:debounce_delay(),
+  call s:debounce(a:state, 'commit_timer', s:debounce_delay(),
         \ {-> s:apply_commit_select(a:state)})
 endfunction
 
@@ -1184,8 +1225,13 @@ function! s:toggle_branch_help() abort
 endfunction
 
 function! s:git_run(root, args) abort
-  let cmd = 'git --no-pager -c core.quotePath=false -c credential.interactive=never -C '
-        \ . shellescape(a:root) . ' ' . a:args . ' 2>&1'
+  if type(a:args) == type([])
+    let cmd = ['git', '--no-pager', '-c', 'core.quotePath=false',
+          \ '-c', 'credential.interactive=never', '-C', a:root] + a:args
+  else
+    let cmd = 'git --no-pager -c core.quotePath=false -c credential.interactive=never -C '
+          \ . shellescape(a:root) . ' ' . a:args . ' 2>&1'
+  endif
   let out = systemlist(cmd)
   return {'ok': v:shell_error == 0, 'out': out, 'code': v:shell_error}
 endfunction
@@ -1213,11 +1259,9 @@ function! s:prompt_input(prompt, ...) abort
 endfunction
 
 function! s:has_staged_changes(root, paths) abort
-  let path_args = join(map(copy(a:paths), 'shellescape(v:val)'), ' ')
-  let cmd = 'git --no-pager -c core.quotePath=false -C '
-        \ . shellescape(a:root) . ' diff --cached --quiet -- ' . path_args
-  call systemlist(cmd)
-  return v:shell_error == 1
+  let result = s:git_run(a:root,
+        \ ['diff', '--cached', '--quiet', '--'] + a:paths)
+  return result.code == 1
 endfunction
 
 function! s:refresh_file_list(state, keep_path) abort
@@ -1268,10 +1312,7 @@ function! s:refresh_debounce_delay() abort
 endfunction
 
 function! s:cancel_refresh(state) abort
-  if get(a:state, 'refresh_timer', -1) != -1
-    call timer_stop(a:state.refresh_timer)
-    let a:state.refresh_timer = -1
-  endif
+  call s:cancel_debounce(a:state, 'refresh_timer')
 endfunction
 
 function! s:apply_pending_refresh(state) abort
@@ -1294,7 +1335,7 @@ function! s:refresh_all() abort
   endif
 
   call s:cancel_refresh(state)
-  let state.refresh_timer = timer_start(delay,
+  call s:debounce(state, 'refresh_timer', delay,
         \ {-> s:apply_pending_refresh(state)})
 endfunction
 
@@ -1431,7 +1472,7 @@ function! s:discard_file(root, file) abort
   if index_status ==# ' ' && !empty(oldpath)
     let target = oldpath
   endif
-  if !s:git_do(a:root, 'checkout -- ' . shellescape(target))
+  if !s:git_do(a:root, ['checkout', '--', target])
     return 0
   endif
 
@@ -1439,7 +1480,7 @@ function! s:discard_file(root, file) abort
     let abs_new = a:root . '/' . a:file.path
     if filereadable(abs_new)
       let tracked = !empty(s:git_one(a:root,
-            \ 'ls-files --error-unmatch -- ' . shellescape(a:file.path)))
+            \ ['ls-files', '--error-unmatch', '--', a:file.path]))
       if !tracked
         call delete(abs_new)
       endif
@@ -1587,16 +1628,13 @@ function! s:copy_commit_hash() abort
 endfunction
 
 function! s:is_ancestor(root, ancestor, descendant) abort
-  let cmd = 'git --no-pager -C ' . shellescape(a:root)
-        \ . ' merge-base --is-ancestor '
-        \ . shellescape(a:ancestor) . ' ' . shellescape(a:descendant)
-        \ . ' 2>&1'
-  call system(cmd)
-  return v:shell_error == 0
+  let result = s:git_run(a:root,
+        \ ['merge-base', '--is-ancestor', a:ancestor, a:descendant])
+  return result.code == 0
 endfunction
 
 function! s:git_in_progress(root) abort
-  let gitdir = s:git_one(a:root, 'rev-parse --absolute-git-dir')
+  let gitdir = s:git_one(a:root, ['rev-parse', '--absolute-git-dir'])
   if empty(gitdir)
     return ''
   endif
@@ -1636,7 +1674,7 @@ function! s:edit_commit_message() abort
     return
   endif
 
-  let branch = s:git_one(state.root, 'symbolic-ref --short -q HEAD')
+  let branch = s:git_one(state.root, ['symbolic-ref', '--short', '-q', 'HEAD'])
   if empty(branch)
     call s:err('cannot edit a commit message in detached HEAD')
     return
@@ -1650,23 +1688,23 @@ function! s:edit_commit_message() abort
     return
   endif
 
-  let head_sha = s:git_one(state.root, 'rev-parse HEAD')
+  let head_sha = s:git_one(state.root, ['rev-parse', 'HEAD'])
   let is_head = entry.sha ==# head_sha
-  let has_remote = !empty(s:git(state.root, 'remote'))
+  let has_remote = !empty(s:git(state.root, ['remote']))
   if has_remote && !get(entry, 'unpushed', 0)
     call s:err('only unpushed commits can be edited')
     return
   endif
 
   if !is_head
-        \ && !empty(s:git(state.root, 'status --porcelain --untracked-files=no'))
+        \ && !empty(s:git(state.root, ['status', '--porcelain', '--untracked-files=no']))
     call s:err('commit or stash changes before editing an older commit')
     return
   endif
 
   if !is_head && get(g:, 'git_changes_confirm_rewrite', 1)
     let rewrite_count = s:git_one(state.root,
-          \ 'rev-list --count ' . shellescape(entry.sha . '..' . branch))
+          \ ['rev-list', '--count', entry.sha . '..' . branch])
     let total = empty(rewrite_count) ? 1 : str2nr(rewrite_count) + 1
     let prompt = printf('Rewrite %d commit(s) on %s? '
           \ . 'Other branches will not be updated. Continue?', total, branch)
@@ -1676,7 +1714,7 @@ function! s:edit_commit_message() abort
   endif
 
   let message = s:git(state.root,
-        \ 'log -1 --format=%B ' . shellescape(entry.sha))
+        \ ['log', '-1', '--format=%B', entry.sha])
   while !empty(message) && empty(trim(message[-1]))
     call remove(message, -1)
   endwhile
@@ -1714,9 +1752,8 @@ endfunction
 
 function! s:delete_ref_tree(root, prefix) abort
   for ref in s:git(a:root,
-        \ 'for-each-ref ' . shellescape('--format=%(refname)') . ' '
-        \ . shellescape(a:prefix))
-    call s:git(a:root, 'update-ref -d ' . shellescape(ref))
+        \ ['for-each-ref', '--format=%(refname)', a:prefix])
+    call s:git(a:root, ['update-ref', '-d', ref])
   endfor
 endfunction
 
@@ -1733,7 +1770,7 @@ function! s:reword_commit(info, msgfile) abort
   let filter = 'if [ "$GIT_COMMIT" = ' . shellescape(sha) . ' ]; then cat '
         \ . shellescape(a:msgfile) . '; else cat; fi'
   let parent = s:git_one(root,
-        \ 'rev-parse --verify -q ' . shellescape(sha . '^'))
+        \ ['rev-parse', '--verify', '-q', sha . '^'])
   let range = empty(parent)
         \ ? '--root ' . shellescape(branch)
         \ : shellescape(sha . '^..' . branch)
@@ -1743,10 +1780,10 @@ function! s:reword_commit(info, msgfile) abort
         \ . ' --msg-filter ' . shellescape(filter)
         \ . ' -- ' . range
 
-  let old_head = s:git_one(root, 'rev-parse HEAD')
-  let old_tree = s:git_one(root, 'rev-parse HEAD^{tree}')
-  let old_count = s:git_one(root, 'rev-list --count HEAD')
-  let old_merges = s:git_one(root, 'rev-list --count --merges HEAD')
+  let old_head = s:git_one(root, ['rev-parse', 'HEAD'])
+  let old_tree = s:git_one(root, ['rev-parse', 'HEAD^{tree}'])
+  let old_count = s:git_one(root, ['rev-list', '--count', 'HEAD'])
+  let old_merges = s:git_one(root, ['rev-list', '--count', '--merges', 'HEAD'])
 
   let old_squelch = $FILTER_BRANCH_SQUELCH_WARNING
   let $FILTER_BRANCH_SQUELCH_WARNING = '1'
@@ -1760,7 +1797,7 @@ function! s:reword_commit(info, msgfile) abort
   let new_head = ''
   if ok
     for line in s:git(root,
-          \ 'show ' . shellescape(state_ref . ':filter.map'))
+          \ ['show', state_ref . ':filter.map'])
       let parts = split(line, ':')
       if len(parts) >= 2 && parts[0] ==# sha
         let new_sha = parts[1]
@@ -1768,18 +1805,16 @@ function! s:reword_commit(info, msgfile) abort
       endif
     endfor
 
-    let new_head = s:git_one(root, 'rev-parse HEAD')
-    let new_tree = s:git_one(root, 'rev-parse HEAD^{tree}')
-    let new_count = s:git_one(root, 'rev-list --count HEAD')
-    let new_merges = s:git_one(root, 'rev-list --count --merges HEAD')
+    let new_head = s:git_one(root, ['rev-parse', 'HEAD'])
+    let new_tree = s:git_one(root, ['rev-parse', 'HEAD^{tree}'])
+    let new_count = s:git_one(root, ['rev-list', '--count', 'HEAD'])
+    let new_merges = s:git_one(root, ['rev-list', '--count', '--merges', 'HEAD'])
     if empty(new_head)
           \ || new_tree !=# old_tree
           \ || str2nr(new_count) != str2nr(old_count)
           \ || str2nr(new_merges) != str2nr(old_merges)
       if !empty(old_head)
-        call s:git(root, 'update-ref '
-              \ . shellescape('refs/heads/' . branch) . ' '
-              \ . shellescape(old_head))
+        call s:git(root, ['update-ref', 'refs/heads/' . branch, old_head])
       endif
       call s:err('rewrite verification failed; branch restored')
       let ok = 0
@@ -1841,10 +1876,10 @@ function! s:apply_edited_message() abort
   try
     if info.is_head
       if !s:git_do(info.state.root,
-            \ 'commit --amend --only -F ' . shellescape(msgfile))
+            \ ['commit', '--amend', '--only', '-F', msgfile])
         return
       endif
-      let target_sha = s:git_one(info.state.root, 'rev-parse HEAD')
+      let target_sha = s:git_one(info.state.root, ['rev-parse', 'HEAD'])
     else
       let target_sha = s:reword_commit(info, msgfile)
       if empty(target_sha)
@@ -1856,7 +1891,7 @@ function! s:apply_edited_message() abort
   endtry
 
   let info.sha = target_sha
-  let info.is_head = target_sha ==# s:git_one(info.state.root, 'rev-parse HEAD')
+  let info.is_head = target_sha ==# s:git_one(info.state.root, ['rev-parse', 'HEAD'])
   setlocal nomodified
   echomsg 'Commit message updated'
   call s:reload_after_reword(info.state, target_sha)
@@ -1881,7 +1916,7 @@ function! s:commit_index(root, ...) abort
     return 0
   endif
 
-  if !s:git_do(a:root, 'commit -m ' . shellescape(message))
+  if !s:git_do(a:root, ['commit', '-m', message])
     return 0
   endif
 
@@ -1905,7 +1940,7 @@ endfunction
 " Git writes the prepared commit message for merges, cherry-picks, rebases, and
 " reverts to .git/MERGE_MSG, including the "Conflicts:" comment block.
 function! s:merge_message_lines(root) abort
-  let gitdir = s:git_one(a:root, 'rev-parse --absolute-git-dir')
+  let gitdir = s:git_one(a:root, ['rev-parse', '--absolute-git-dir'])
   if empty(gitdir)
     return []
   endif
@@ -1980,16 +2015,16 @@ function! s:commit_template(state) abort
         \ ])
 
   if in_progress ==# 'MERGE_HEAD'
-    if empty(s:git(root, 'diff --name-only --diff-filter=U'))
+    if empty(s:git(root, ['diff', '--name-only', '--diff-filter=U']))
       call add(lines, '# All conflicts fixed but you are still merging.')
       call add(lines, '#')
     endif
   elseif in_progress ==# 'CHERRY_PICK_HEAD'
-    let sha = s:git_one(root, 'rev-parse --short CHERRY_PICK_HEAD')
+    let sha = s:git_one(root, ['rev-parse', '--short', 'CHERRY_PICK_HEAD'])
     call add(lines, '# You are currently cherry-picking commit ' . sha . '.')
     call add(lines, '#')
   elseif in_progress ==# 'REVERT_HEAD'
-    let sha = s:git_one(root, 'rev-parse --short REVERT_HEAD')
+    let sha = s:git_one(root, ['rev-parse', '--short', 'REVERT_HEAD'])
     call add(lines, '# You are currently reverting commit ' . sha . '.')
     call add(lines, '#')
   endif
@@ -2006,7 +2041,7 @@ function! s:commit_template(state) abort
         \ 'U': 'unmerged',
         \ }
   for line in s:git(root,
-        \ 'diff --cached --name-status --find-renames')
+        \ ['diff', '--cached', '--name-status', '--find-renames'])
     let parts = split(line, "\t", 1)
     if empty(parts)
       continue
@@ -2097,7 +2132,7 @@ function! s:apply_commit_message() abort
   call writefile(message, msgfile)
   try
     let ok = s:git_do(info.root,
-          \ 'commit --cleanup=strip -F ' . shellescape(msgfile))
+          \ ['commit', '--cleanup=strip', '-F', msgfile])
   finally
     call delete(msgfile)
   endtry
@@ -2141,7 +2176,7 @@ endfunction
 
 function! s:upstream_ref(root) abort
   let result = s:git_run(a:root,
-        \ 'rev-parse --abbrev-ref --symbolic-full-name @{u}')
+        \ ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])
   return result.ok && !empty(result.out) ? result.out[0] : ''
 endfunction
 
@@ -2159,13 +2194,13 @@ function! s:preferred_remote(root, ...) abort
 
   if !empty(branch)
     let branch_remote = s:git_one(a:root,
-          \ 'config --get ' . shellescape('branch.' . branch . '.remote'))
+          \ ['config', '--get', 'branch.' . branch . '.remote'])
     if !empty(branch_remote)
       return branch_remote
     endif
   endif
 
-  let remotes = s:git(a:root, 'remote')
+  let remotes = s:git(a:root, ['remote'])
   if empty(remotes)
     return ''
   endif
@@ -2191,7 +2226,7 @@ endfunction
 
 function! s:pull_root(root, state) abort
   call s:report(a:state, 'Pulling...', 'busy')
-  let result = s:git_run(a:root, 'pull --no-rebase --no-edit')
+  let result = s:git_run(a:root, ['pull', '--no-rebase', '--no-edit'])
   if !empty(a:state)
     call s:reload_current_branch(a:state)
   endif
@@ -2258,7 +2293,7 @@ function! s:push_root(root, state) abort
   call s:report(a:state, 'Pushing...', 'busy')
 
   if s:has_upstream(a:root)
-    let result = s:git_run(a:root, 'push')
+    let result = s:git_run(a:root, ['push'])
     if !result.ok
       call s:report(a:state, 'Push failed: ' . s:output_message(result.out),
             \ 'error')
@@ -2271,7 +2306,7 @@ function! s:push_root(root, state) abort
     return
   endif
 
-  let branch = s:git_one(a:root, 'symbolic-ref --short -q HEAD')
+  let branch = s:git_one(a:root, ['symbolic-ref', '--short', '-q', 'HEAD'])
   if empty(branch)
     call s:report(a:state, 'Cannot push: not on a branch (detached HEAD)',
           \ 'error')
@@ -2293,8 +2328,8 @@ function! s:push_root(root, state) abort
     endif
   endif
 
-  let result = s:git_run(a:root, 'push --set-upstream '
-        \ . shellescape(remote) . ' ' . shellescape(branch))
+  let result = s:git_run(a:root,
+        \ ['push', '--set-upstream', remote, branch])
   if !result.ok
     call s:report(a:state, 'Push failed: ' . s:output_message(result.out),
           \ 'error')
@@ -2345,14 +2380,12 @@ function! s:stage_current(mode) abort
       echomsg 'Nothing to stage: ' . file.path
       return
     endif
-    if !s:git_do(state.root,
-          \ 'add -A -- ' . s:path_args(add_paths))
+    if !s:git_do(state.root, ['add', '-A', '--'] + add_paths)
       return
     endif
     echomsg 'Staged: ' . file.path
   else
-    if !s:git_do(state.root,
-          \ 'reset -q HEAD -- ' . s:path_args(paths))
+    if !s:git_do(state.root, ['reset', '-q', 'HEAD', '--'] + paths)
       return
     endif
     echomsg 'Unstaged: ' . file.path
@@ -2386,7 +2419,7 @@ function! s:stage_all() abort
     let keep_path = state.files[state.file_index].path
   endif
 
-  if !s:git_do(state.root, 'add -A -- .')
+  if !s:git_do(state.root, ['add', '-A', '--', '.'])
     return
   endif
 
@@ -2419,7 +2452,7 @@ function! s:unstage_all() abort
     let keep_path = state.files[state.file_index].path
   endif
 
-  if !s:git_do(state.root, 'reset -q HEAD -- .')
+  if !s:git_do(state.root, ['reset', '-q', 'HEAD', '--', '.'])
     return
   endif
 
@@ -2601,7 +2634,7 @@ function! s:checkout_branch() abort
     return
   endif
 
-  if !s:git_do(state.root, 'checkout ' . shellescape(branch.name))
+  if !s:git_do(state.root, ['checkout', branch.name])
     return
   endif
 
@@ -2623,7 +2656,7 @@ function! s:merge_root(root, branch, ...) abort
 
   call s:report(state, 'Merging ' . a:branch . '...', 'busy')
 
-  let result = s:git_run(a:root, 'merge --no-edit ' . shellescape(a:branch))
+  let result = s:git_run(a:root, ['merge', '--no-edit', a:branch])
   if !empty(state)
     call s:reload_current_branch(state)
   endif
@@ -2661,7 +2694,7 @@ function! s:abort_merge_root(root, ...) abort
     return
   endif
 
-  let result = s:git_run(a:root, 'merge --abort')
+  let result = s:git_run(a:root, ['merge', '--abort'])
   if !empty(state)
     call s:reload_current_branch(state)
   endif
@@ -2718,7 +2751,7 @@ function! s:new_branch() abort
   endif
 
   if !s:git_do(state.root,
-        \ 'checkout -b ' . shellescape(name) . ' ' . shellescape(branch.name))
+        \ ['checkout', '-b', name, branch.name])
     return
   endif
 
@@ -2747,7 +2780,7 @@ function! s:delete_branch() abort
     return
   endif
 
-  if !s:git_do(state.root, 'branch -d ' . shellescape(branch.name))
+  if !s:git_do(state.root, ['branch', '-d', branch.name])
     return
   endif
 
@@ -2757,11 +2790,11 @@ endfunction
 
 
 function! s:current_branch(root) abort
-  let branch = s:git_one(a:root, 'symbolic-ref --short -q HEAD')
+  let branch = s:git_one(a:root, ['symbolic-ref', '--short', '-q', 'HEAD'])
   if !empty(branch)
     return branch
   endif
-  let sha = s:git_one(a:root, 'rev-parse --short HEAD')
+  let sha = s:git_one(a:root, ['rev-parse', '--short', 'HEAD'])
   return empty(sha) ? 'HEAD' : 'detached at ' . sha
 endfunction
 
@@ -2780,7 +2813,7 @@ endfunction
 
 function! s:resolve_ref(root, ref) abort
   return s:git_one(a:root,
-        \ 'rev-parse --verify -q ' . shellescape(a:ref . '^{commit}'))
+        \ ['rev-parse', '--verify', '-q', a:ref . '^{commit}'])
 endfunction
 
 function! s:parse_status_lines(lines) abort
@@ -3639,10 +3672,6 @@ function! s:file_paths(file) abort
   return [old_path, new_path, paths]
 endfunction
 
-function! s:path_args(paths) abort
-  return join(map(copy(a:paths), 'shellescape(v:val)'), ' ')
-endfunction
-
 " `git add -A` fails with "pathspec did not match any files" for a path that is
 " absent from both the index and the worktree. That happens once a rename or a
 " deletion is fully staged, so drop those paths before staging.
@@ -3651,7 +3680,7 @@ function! s:addable_paths(root, paths) abort
   for path in a:paths
     if !empty(getftype(a:root . '/' . path))
           \ || !empty(s:git_one(a:root,
-          \       'ls-files --error-unmatch -- ' . shellescape(path)))
+          \       ['ls-files', '--error-unmatch', '--', path]))
       call add(result, path)
     endif
   endfor
@@ -4074,18 +4103,18 @@ function! s:parse_open_args(root, args) abort
             \ })
     endif
   elseif len(a:args) == 1
-    let old_ref = s:resolve_ref(a:root, a:args[0])
+    let old_label = a:args[0]
+    let new_label = 'HEAD'
+    let old_ref = s:resolve_ref(a:root, old_label)
     if empty(old_ref)
-      call s:err('unknown revision: ' . a:args[0])
+      call s:err('unknown revision: ' . old_label)
       return {}
     endif
-    let new_ref = s:resolve_ref(a:root, 'HEAD')
+    let new_ref = s:resolve_ref(a:root, new_label)
     if empty(new_ref)
       call s:err('HEAD has no commits')
       return {}
     endif
-    let old_label = a:args[0]
-    let new_label = 'HEAD'
     call add(start_entries, {
           \ 'kind': 'compare',
           \ 'short': 'CMP',
@@ -4099,18 +4128,18 @@ function! s:parse_open_args(root, args) abort
     let list_title = old_label . '..' . new_label
     let log_range = old_ref . '..' . new_ref
   else
-    let old_ref = s:resolve_ref(a:root, a:args[0])
-    if empty(old_ref)
-      call s:err('unknown revision: ' . a:args[0])
-      return {}
-    endif
-    let new_ref = s:resolve_ref(a:root, a:args[1])
-    if empty(new_ref)
-      call s:err('unknown revision: ' . a:args[1])
-      return {}
-    endif
     let old_label = a:args[0]
     let new_label = a:args[1]
+    let old_ref = s:resolve_ref(a:root, old_label)
+    if empty(old_ref)
+      call s:err('unknown revision: ' . old_label)
+      return {}
+    endif
+    let new_ref = s:resolve_ref(a:root, new_label)
+    if empty(new_ref)
+      call s:err('unknown revision: ' . new_label)
+      return {}
+    endif
     call add(start_entries, {
           \ 'kind': 'compare',
           \ 'short': 'CMP',
@@ -4134,18 +4163,10 @@ function! s:parse_open_args(root, args) abort
         \ }
 endfunction
 
-function! s:open_tab(root, parsed, tabnr) abort
-  let root = a:root
-  let start_entries = a:parsed.start_entries
-  let log_range = a:parsed.log_range
-  let has_head = a:parsed.has_head
-  let list_title = a:parsed.list_title
-
-  let next_id = get(s:, 'next_id', 0) + 1
-  let s:next_id = next_id
-  let state = {
-        \ 'id': next_id,
-        \ 'root': root,
+function! s:new_state(root, parsed, id) abort
+  return {
+        \ 'id': a:id,
+        \ 'root': a:root,
         \ 'tab': 0,
         \ 'commits': [],
         \ 'commit_loaded': 0,
@@ -4158,10 +4179,10 @@ function! s:open_tab(root, parsed, tabnr) abort
         \ 'commits_header': 1,
         \ 'files_header': 1,
         \ 'updating': 1,
-        \ 'list_title': list_title,
-        \ 'log_range': log_range,
-        \ 'start_entries': start_entries,
-        \ 'has_head': has_head,
+        \ 'list_title': a:parsed.list_title,
+        \ 'log_range': a:parsed.log_range,
+        \ 'start_entries': a:parsed.start_entries,
+        \ 'has_head': a:parsed.has_head,
         \ 'diff_cached': 0,
         \ 'log_ref': '',
         \ 'show_help': 0,
@@ -4191,6 +4212,14 @@ function! s:open_tab(root, parsed, tabnr) abort
         \ 'status': '',
         \ 'status_kind': 'info',
         \ }
+endfunction
+
+function! s:open_tab(root, parsed, tabnr) abort
+  let root = a:root
+
+  let next_id = get(s:, 'next_id', 0) + 1
+  let s:next_id = next_id
+  let state = s:new_state(root, a:parsed, next_id)
 
   tabnew
   if a:tabnr > 0
@@ -4428,35 +4457,30 @@ function! s:git_dir_for(dir) abort
     return s:gitdir_cache[dir]
   endif
 
-  let current = dir
   let result = ''
-  while 1
-    let candidate = current . '/.git'
+  let root = s:repo_root_for(dir)
+  if !empty(root)
+    let candidate = root . '/.git'
     if isdirectory(candidate)
       let result = candidate
-      break
     elseif filereadable(candidate)
       let line = get(readfile(candidate, '', 1), 0, '')
       let gitdir = matchstr(line, '^gitdir:\s*\zs.*')
       if !empty(gitdir)
         if gitdir !~# '^/'
-          let gitdir = simplify(current . '/' . gitdir)
+          let gitdir = simplify(root . '/' . gitdir)
         endif
         let result = gitdir
       endif
-      break
     endif
-
-    let parent = fnamemodify(current, ':h')
-    if parent ==# current
-      break
-    endif
-    let current = parent
-  endwhile
+  endif
 
   let s:gitdir_cache[dir] = result
   if len(s:gitdir_cache) > 200
     call filter(s:gitdir_cache, 'v:val !=# ""')
+    if len(s:gitdir_cache) > 200
+      let s:gitdir_cache = {}
+    endif
   endif
   return result
 endfunction
@@ -4497,19 +4521,20 @@ function! s:redraw_statusline() abort
 endfunction
 
 " Whether the current file has unstaged changes, checked in the background so
-" statusline redraws stay fast. Returns the last known value until the job is
-" done.
+" statusline redraws stay fast. One job per repository collects the whole
+" worktree status, and every buffer in that repository shares the result. This
+" avoids spawning a git process per buffer (and avoids refreshing the index
+" once per buffer) on every statusline tick.
 function! s:statusline_unstaged(root, path) abort
-  let key = a:root . nr2char(31) . a:path
-  let cached = get(s:statusline_unstaged_cache, key, {})
+  let cached = get(s:statusline_unstaged_cache, a:root, {})
 
   " Drop jobs whose buffer was wiped before the callback could run.
-  for job_key in keys(s:statusline_unstaged_jobs)
-    let job = s:statusline_unstaged_jobs[job_key]
+  for root in keys(s:statusline_unstaged_jobs)
+    let job = s:statusline_unstaged_jobs[root]
     if !bufexists(get(job.state, 'files_buf', -1))
       call s:job_stop(job.state, 'unstaged')
-      if has_key(s:statusline_unstaged_jobs, job_key)
-        call remove(s:statusline_unstaged_jobs, job_key)
+      if has_key(s:statusline_unstaged_jobs, root)
+        call remove(s:statusline_unstaged_jobs, root)
       endif
     endif
   endfor
@@ -4517,47 +4542,48 @@ function! s:statusline_unstaged(root, path) abort
   if empty(cached)
         \ || reltimefloat(reltime(cached.time)) * 1000
         \      >= s:statusline_unstaged_interval
-    if !has_key(s:statusline_unstaged_jobs, key)
-      call s:start_statusline_unstaged_job(a:root, a:path, key)
+    if !has_key(s:statusline_unstaged_jobs, a:root)
+      call s:start_statusline_unstaged_job(a:root)
     endif
   endif
 
-  return empty(cached) ? 0 : cached.unstaged
+  return empty(cached) ? 0 : get(cached.files, a:path, 0)
 endfunction
 
-function! s:start_statusline_unstaged_job(root, path, key) abort
+function! s:start_statusline_unstaged_job(root) abort
   let fake = {'files_buf': bufnr('%'), 'root': a:root, 'unstaged_tok': 1}
-  let ctx = {'key': a:key, 'state': fake}
-  let s:statusline_unstaged_jobs[a:key] = {'state': fake, 'ctx': ctx}
+  let ctx = {'root': a:root, 'state': fake}
+  let s:statusline_unstaged_jobs[a:root] = {'state': fake, 'ctx': ctx}
   call s:git_job(fake, 'unstaged', 'unstaged_tok', 1,
-        \ ['status', '--porcelain=v1', '--untracked-files=normal',
-        \  '--', a:path],
+        \ ['status', '--porcelain=v1', '--untracked-files=normal'],
         \ function('s:on_statusline_unstaged_job', [ctx]))
 endfunction
 
 function! s:on_statusline_unstaged_job(ctx, result) abort
-  let key = a:ctx.key
-  let job = get(s:statusline_unstaged_jobs, key, {})
+  let root = a:ctx.root
+  let job = get(s:statusline_unstaged_jobs, root, {})
   if empty(job) || job.state isnot a:ctx.state
     return
   endif
-  call remove(s:statusline_unstaged_jobs, key)
+  call remove(s:statusline_unstaged_jobs, root)
 
-  let unstaged = 0
+  let files = {}
   for file in s:parse_worktree_status(a:result.out)
     let xy = get(file, 'status_text', '')
     if xy ==# '??'
           \ || (strlen(xy) >= 2 && strpart(xy, 1, 1) !=# ' ')
-      let unstaged = 1
-      break
+      let files[file.path] = 1
+      if !empty(get(file, 'oldpath', ''))
+        let files[file.oldpath] = 1
+      endif
     endif
   endfor
 
-  let s:statusline_unstaged_cache[key] = {
+  let s:statusline_unstaged_cache[root] = {
         \ 'time': reltime(),
-        \ 'unstaged': unstaged,
+        \ 'files': files,
         \ }
-  if len(s:statusline_unstaged_cache) > 200
+  if len(s:statusline_unstaged_cache) > 50
     call filter(s:statusline_unstaged_cache,
           \ 'reltimefloat(reltime(v:val.time)) * 1000 < 60000')
   endif
@@ -4625,6 +4651,12 @@ function! git_changes#statusline() abort
   let text = '[' . label . s:statusline_unstaged_marker() . ']'
   let s:statusline_text_cache[key] = text
   let s:statusline_last[key] = [reltime(), text]
+  if len(s:statusline_last) > 200
+    let now = reltime()
+    call filter(s:statusline_last,
+          \ 'reltimefloat(reltime(v:val[0], now)) < 60')
+    call filter(s:statusline_text_cache, 'has_key(s:statusline_last, v:key)')
+  endif
   return text
 endfunction
 
@@ -4632,8 +4664,28 @@ let s:blame_line_cache = {}
 let s:blame_line_jobs = {}
 let s:blame_debounce = {}
 
+" Release per-buffer caches when their buffer disappears. Without this,
+" s:blame_debounce keeps an entry per edited buffer for the whole session.
+function! s:clear_buffer_caches(buf) abort
+  let st = get(s:blame_debounce, a:buf, {})
+  if !empty(st)
+    call remove(s:blame_debounce, a:buf)
+    if st.timer != -1
+      call timer_stop(st.timer)
+    endif
+  endif
+  let prefix = a:buf . ':'
+  call filter(s:blame_line_cache, 'stridx(v:key, prefix) != 0')
+endfunction
+
+augroup git_changes_buffer_cache
+  autocmd!
+  autocmd BufWipeout * call s:clear_buffer_caches(str2nr(expand('<abuf>')))
+augroup END
+
 function! s:statusline_clear() abort
   let s:gitdir_cache = {}
+  let s:repo_root_cache = {}
   let s:statusline_text_cache = {}
   let s:statusline_last = {}
   let s:statusline_unstaged_cache = {}
@@ -4682,13 +4734,14 @@ function! s:parse_blame_entries(out) abort
     let i += 1
     while i < total && a:out[i][0] !=# "\t"
       let field = a:out[i]
-      if field =~# '^author '
+      " Prefix checks are much cheaper than a regex per metadata field.
+      if strpart(field, 0, 7) ==# 'author '
         let author = strpart(field, 7)
-      elseif field =~# '^author-mail '
+      elseif strpart(field, 0, 12) ==# 'author-mail '
         let email = substitute(strpart(field, 12), '^<\(.*\)>$', '\1', '')
-      elseif field =~# '^author-time '
+      elseif strpart(field, 0, 12) ==# 'author-time '
         let date = strftime('%Y-%m-%d', str2nr(strpart(field, 12)))
-      elseif field =~# '^summary '
+      elseif strpart(field, 0, 8) ==# 'summary '
         let summary = strpart(field, 8)
       endif
       let i += 1
@@ -4721,14 +4774,31 @@ function! s:parse_blame_entries(out) abort
   return entries
 endfunction
 
-function! s:blame_line_entries(root, path) abort
+" Cache key for one line's blame. Including the line number keeps a cursor
+" move from reusing (or invalidating) another line's cached entry.
+function! s:blame_key(buf, tick, lnum) abort
+  return a:buf . ':' . a:tick . ':' . a:lnum
+endfunction
+
+function! s:blame_args(path, lnum, contents) abort
+  let args = ['-c', 'color.ui=false', 'blame', '--line-porcelain',
+        \ '-L', a:lnum . ',' . a:lnum]
+  if !empty(a:contents)
+    call extend(args, ['--contents', a:contents])
+  endif
+  call extend(args, ['--', a:path])
+  return args
+endfunction
+
+" Blame a single line. Blaming the whole file just to read one line is very
+" expensive on large files, so limit git to the requested line.
+function! s:blame_line_entry(root, path, lnum) abort
   let buf = bufnr('%')
-  let tick = getbufvar(buf, 'changedtick', 0)
-  let key = buf . ':' . tick
+  let key = s:blame_key(buf, getbufvar(buf, 'changedtick', 0), a:lnum)
   let now = localtime()
   let cached = get(s:blame_line_cache, key, {})
   if !empty(cached) && now - cached.time < 5
-    return cached.entries
+    return cached.entry
   endif
 
   let contents = ''
@@ -4737,17 +4807,14 @@ function! s:blame_line_entries(root, path) abort
     call writefile(getline(1, '$'), contents)
   endif
 
-  let entries = []
+  let entry = {}
   try
-    let cmd = 'git --no-pager -c core.quotePath=false -c color.ui=false -C '
-          \ . shellescape(a:root) . ' blame --line-porcelain'
-    if !empty(contents)
-      let cmd .= ' --contents ' . shellescape(contents)
-    endif
-    let cmd .= ' -- ' . shellescape(a:path)
-    let out = systemlist(cmd)
-    if !v:shell_error
-      let entries = s:parse_blame_entries(out)
+    let result = s:git_run(a:root, s:blame_args(a:path, a:lnum, contents))
+    if result.ok
+      let entries = s:parse_blame_entries(result.out)
+      if !empty(entries)
+        let entry = entries[0]
+      endif
     endif
   finally
     if !empty(contents)
@@ -4755,16 +4822,16 @@ function! s:blame_line_entries(root, path) abort
     endif
   endtry
 
-  let s:blame_line_cache[key] = {'time': now, 'entries': entries}
-  if len(s:blame_line_cache) > 100
-    call filter(s:blame_line_cache, 'now - v:val.time < 30')
+  let s:blame_line_cache[key] = {'time': now, 'entry': entry}
+  if len(s:blame_line_cache) > 200
+    call filter(s:blame_line_cache, 'localtime() - v:val.time < 30')
   endif
-  return entries
+  return entry
 endfunction
 
 " Resolve the current buffer's worktree root and repo-relative path without
 " spawning git. Handles normal .git directories and worktree/submodule .git
-" files.
+" files. Repository roots are cached per directory by s:repo_root_for().
 function! s:buffer_repo_path() abort
   let file = expand('%:p')
   if empty(file)
@@ -4772,24 +4839,7 @@ function! s:buffer_repo_path() abort
   endif
   let file = resolve(file)
 
-  let current = simplify(fnamemodify(file, ':h'))
-  while len(current) > 1 && current[-1:] ==# '/'
-    let current = current[:-2]
-  endwhile
-
-  let root = ''
-  let scan = current
-  while 1
-    if isdirectory(scan . '/.git') || filereadable(scan . '/.git')
-      let root = scan
-      break
-    endif
-    let parent = fnamemodify(scan, ':h')
-    if parent ==# scan
-      break
-    endif
-    let scan = parent
-  endwhile
+  let root = s:repo_root_for(fnamemodify(file, ':h'))
   if empty(root)
     return ['', '']
   endif
@@ -4804,12 +4854,11 @@ function! git_changes#blame_line_info() abort
     return {}
   endif
 
-  let entries = s:blame_line_entries(root, path)
   let lnum = line('.')
-  if lnum < 1 || lnum > len(entries)
+  if lnum < 1
     return {}
   endif
-  return entries[lnum - 1]
+  return s:blame_line_entry(root, path, lnum)
 endfunction
 
 function! s:format_blame_line(info) abort
@@ -4828,18 +4877,14 @@ function! git_changes#blame_line() abort
   return empty(info) ? '' : s:format_blame_line(info)
 endfunction
 
-function! s:start_blame_line_job(root, path, key) abort
+function! s:start_blame_line_job(root, path, key, lnum) abort
   let contents = ''
   if &modified
     let contents = tempname()
     call writefile(getline(1, '$'), contents)
   endif
 
-  let args = ['blame', '--line-porcelain']
-  if !empty(contents)
-    call extend(args, ['--contents', contents])
-  endif
-  call extend(args, ['--', a:path])
+  let args = s:blame_args(a:path, a:lnum, contents)
 
   let fake = {'files_buf': bufnr('%'), 'root': a:root, 'blame_tok': 1}
   let ctx = {'key': a:key, 'contents': contents, 'state': fake}
@@ -4862,9 +4907,9 @@ function! s:on_blame_line_job(ctx, result) abort
         \ ? [] : s:parse_blame_entries(a:result.out)
   let s:blame_line_cache[key] = {
         \ 'time': localtime(),
-        \ 'entries': entries,
+        \ 'entry': empty(entries) ? {} : entries[0],
         \ }
-  if len(s:blame_line_cache) > 100
+  if len(s:blame_line_cache) > 200
     call filter(s:blame_line_cache, 'localtime() - v:val.time < 30')
   endif
   if s:statusline_mode_ok()
@@ -4881,37 +4926,26 @@ function! git_changes#blame_line_info_async() abort
   endif
 
   let buf = bufnr('%')
-  let tick = getbufvar(buf, 'changedtick', 0)
-  let key = buf . ':' . tick
+  let lnum = line('.')
+  if lnum < 1
+    return {}
+  endif
+  let key = s:blame_key(buf, getbufvar(buf, 'changedtick', 0), lnum)
   let now = localtime()
   let cached = get(s:blame_line_cache, key, {})
 
   " Do not start or refresh jobs outside normal mode.
   if !s:statusline_mode_ok()
-    if empty(cached)
-      return {}
-    endif
-    let lnum = line('.')
-    if lnum < 1 || lnum > len(cached.entries)
-      return {}
-    endif
-    return cached.entries[lnum - 1]
+    return empty(cached) ? {} : cached.entry
   endif
 
   if empty(cached) || now - cached.time >= 10
     if !has_key(s:blame_line_jobs, key)
-      call s:start_blame_line_job(root, path, key)
+      call s:start_blame_line_job(root, path, key, lnum)
     endif
   endif
 
-  if empty(cached)
-    return {}
-  endif
-  let lnum = line('.')
-  if lnum < 1 || lnum > len(cached.entries)
-    return {}
-  endif
-  return cached.entries[lnum - 1]
+  return empty(cached) ? {} : cached.entry
 endfunction
 
 function! s:blame_debounce_fire(buf) abort
@@ -4953,7 +4987,7 @@ function! git_changes#blame_line_async() abort
 
   let info = git_changes#blame_line_info_async()
   let text = empty(info) ? '' : s:format_blame_line(info)
-  if !empty(info) || has_key(s:blame_line_cache, key)
+  if !empty(info)
     let st.shown = {'key': key, 'text': text}
     let st.ready = ''
   else
@@ -4982,7 +5016,7 @@ endfunction
 
 " Worktree status entry for {path}, used by the stage/unstage/discard commands.
 function! s:status_entry(root, path) abort
-  let out = s:git(a:root, 'status --porcelain -- ' . shellescape(a:path))
+  let out = s:git(a:root, ['status', '--porcelain', '--', a:path])
   let files = s:parse_worktree_status(out)
   for file in files
     if file.path ==# a:path || get(file, 'oldpath', '') ==# a:path
@@ -5021,7 +5055,7 @@ function! git_changes#stage(...) abort
     echomsg 'Nothing to stage: ' . path
     return
   endif
-  if !s:git_do(root, 'add -A -- ' . s:path_args(add_paths))
+  if !s:git_do(root, ['add', '-A', '--'] + add_paths)
     return
   endif
 
@@ -5050,9 +5084,9 @@ function! git_changes#unstage(...) abort
   endif
 
   let args = empty(s:resolve_ref(root, 'HEAD'))
-        \ ? 'rm -q --cached -- '
-        \ : 'reset -q HEAD -- '
-  if !s:git_do(root, args . s:path_args(paths))
+        \ ? ['rm', '-q', '--cached', '--']
+        \ : ['reset', '-q', 'HEAD', '--']
+  if !s:git_do(root, args + paths)
     return
   endif
 
@@ -5151,7 +5185,7 @@ function! git_changes#branch_create(...) abort
     return
   endif
 
-  if !s:git_do(root, 'checkout -b ' . shellescape(name))
+  if !s:git_do(root, ['checkout', '-b', name])
     return
   endif
 
@@ -5174,7 +5208,7 @@ function! git_changes#branch_checkout(...) abort
     return
   endif
 
-  if !s:git_do(root, 'checkout ' . shellescape(name))
+  if !s:git_do(root, ['checkout', name])
     return
   endif
 
@@ -5239,8 +5273,7 @@ function! s:unstaged_hunks(root, path) abort
   let index = tempname()
   let work = tempname()
   try
-    let result = s:git_run(a:root,
-          \ 'show ' . shellescape(':' . a:path))
+    let result = s:git_run(a:root, ['show', ':' . a:path])
     let index_lines = result.ok
           \ ? map(result.out, 'substitute(v:val, "\r$", "", "")')
           \ : []
@@ -5248,8 +5281,8 @@ function! s:unstaged_hunks(root, path) abort
     call writefile(getline(1, '$'), work)
 
     let diff = s:git_run(a:root,
-          \ 'diff --no-index --unified=0 --no-ext-diff --no-color -- '
-          \ . shellescape(index) . ' ' . shellescape(work))
+          \ ['diff', '--no-index', '--unified=0', '--no-ext-diff',
+          \  '--no-color', '--', index, work])
     return s:parse_hunks(diff.out)
   finally
     call delete(index)
@@ -5520,7 +5553,19 @@ function! s:parse_diff_args(root, current, tokens, defaults) abort
     return {}
   endif
 
-  let path = s:repo_relative_path(a:root, raw_path)
+  if empty(paths)
+    " a:current is already relative to the repository root. Resolving it again
+    " would use the working directory, which may be a different repository.
+    let path = a:current
+  else
+    let path = s:repo_relative_path(a:root, raw_path)
+    " A relative explicit path is normally relative to the working directory.
+    " Fall back to the repository root when cwd points at another repository.
+    if empty(path) && raw_path !~# '^/'
+          \ && !empty(getftype(a:root . '/' . raw_path))
+      let path = raw_path
+    endif
+  endif
   if empty(path)
     call s:err('path is outside the repository: ' . raw_path)
     return {}
@@ -5584,20 +5629,20 @@ function! s:parse_diff_args(root, current, tokens, defaults) abort
 endfunction
 
 function! s:path_is_conflict(root, path) abort
-  return !empty(s:git(a:root, 'ls-files -u -- ' . shellescape(a:path)))
+  return !empty(s:git(a:root, ['ls-files', '-u', '--', a:path]))
 endfunction
 
 function! s:diff_path_known(root, spec) abort
   if filereadable(a:root . '/' . a:spec.path)
     return 1
   endif
-  if s:git_run(a:root, 'ls-files --error-unmatch -- '
-        \ . shellescape(':(literal)' . a:spec.path)).ok
+  if s:git_run(a:root, ['ls-files', '--error-unmatch', '--',
+        \ ':(literal)' . a:spec.path]).ok
     return 1
   endif
   for expr in [a:spec.old_expr, a:spec.new_expr]
     if !empty(expr)
-          \ && s:git_run(a:root, 'cat-file -e ' . shellescape(expr)).ok
+          \ && s:git_run(a:root, ['cat-file', '-e', expr]).ok
       return 1
     endif
   endfor
@@ -5605,7 +5650,7 @@ function! s:diff_path_known(root, spec) abort
   " still valid: open an empty index-vs-worktree view instead of erroring.
   if a:spec.has_head
         \ && s:git_run(a:root,
-        \      'cat-file -e ' . shellescape('HEAD:' . a:spec.path)).ok
+        \      ['cat-file', '-e', 'HEAD:' . a:spec.path]).ok
     return 1
   endif
   return 0
@@ -5831,6 +5876,24 @@ function! s:init_file_diff_buffer(state, side) abort
   let b:gc_side = a:side
   call s:setup_diff_window()
 
+  " q is safe in every side. The remaining actions are only mapped in
+  " read-only sides: the editable side must keep s/u/d/o/cc available for
+  " normal editing.
+  call s:map_action('quit', 'close_file_diff_tab')
+  if !(a:side ==# 'new' && get(a:state, 'editable', 0))
+    call s:map_action('refresh', 'refresh_file_diff')
+    call s:map_action('stage', 'stage_file_diff', '"stage"')
+    call s:map_action('unstage', 'stage_file_diff', '"unstage"')
+    call s:map_action('toggle_stage', 'stage_file_diff', '"toggle"')
+    call s:map_action('file_discard_diff', 'discard_file_diff')
+    call s:map_action('staged_view', 'toggle_staged_file_diff')
+    call s:map_action('commit', 'commit_file_diff')
+    call s:map_action('commit_editor', 'commit_file_diff_editor')
+    call s:map_action('open_file', 'open_file_diff')
+    call s:map_action('cycle_next', 'cycle_file_diff', 1)
+    call s:map_action('cycle_prev', 'cycle_file_diff', -1)
+  endif
+
   if a:side ==# 'new' && get(a:state, 'editable', 0)
     augroup git_changes_file_diff_write
       autocmd! * <buffer>
@@ -6012,13 +6075,13 @@ function! s:diff_numstat_args(spec) abort
 endfunction
 
 function! s:diff_path_is_untracked(root, spec) abort
-  if s:git_run(a:root, 'ls-files --error-unmatch -- '
-        \ . shellescape(':(literal)' . a:spec.path)).ok
+  if s:git_run(a:root, ['ls-files', '--error-unmatch', '--',
+        \ ':(literal)' . a:spec.path]).ok
     return 0
   endif
   for expr in [a:spec.old_expr, a:spec.new_expr]
     if !empty(expr)
-          \ && s:git_run(a:root, 'cat-file -e ' . shellescape(expr)).ok
+          \ && s:git_run(a:root, ['cat-file', '-e', expr]).ok
       return 0
     endif
   endfor
@@ -6033,8 +6096,7 @@ function! s:analyze_diff(root, spec) abort
     let result.binary = 1
   endif
 
-  let args = s:diff_numstat_args(a:spec)
-  let out = s:git(a:root, join(map(args, 'shellescape(v:val)'), ' '))
+  let out = s:git(a:root, s:diff_numstat_args(a:spec))
   for line in out
     if line =~# '^-\t-\t'
       let result.binary = 1
@@ -6169,25 +6231,32 @@ function! s:stage_file_diff(mode) abort
   endif
 
   let path = spec.path
-  let pathspec = shellescape(':(literal)' . path)
+  let literal = ':(literal)' . path
 
-  if a:mode ==# 'stage'
-    if !s:git_do(state.root, 'add -A -- ' . pathspec)
+  let mode = a:mode
+  if mode ==# 'toggle'
+    let staged = s:git_run(state.root,
+          \ ['diff', '--cached', '--quiet', '--', literal])
+    let mode = staged.code == 1 ? 'unstage' : 'stage'
+  endif
+
+  if mode ==# 'stage'
+    if !s:git_do(state.root, ['add', '-A', '--', literal])
       return
     endif
     echomsg 'Staged: ' . path
   else
     let result = s:git_run(state.root,
-          \ 'diff --cached --quiet -- ' . pathspec)
+          \ ['diff', '--cached', '--quiet', '--', literal])
     if result.code != 1
       echomsg 'Not staged: ' . path
       return
     endif
 
     if spec.has_head
-      let args = 'reset -q HEAD -- ' . pathspec
+      let args = ['reset', '-q', 'HEAD', '--', literal]
     else
-      let args = 'rm -q --cached -- ' . pathspec
+      let args = ['rm', '-q', '--cached', '--', literal]
     endif
     if !s:git_do(state.root, args)
       return
@@ -6297,10 +6366,10 @@ function! s:discard_file_diff() abort
   endif
 
   let path = spec.path
-  let pathspec = shellescape(':(literal)' . path)
+  let literal = ':(literal)' . path
   let abs = state.root . '/' . path
   let tracked = s:git_run(state.root,
-        \ 'ls-files --error-unmatch -- ' . pathspec).ok
+        \ ['ls-files', '--error-unmatch', '--', literal]).ok
 
   if !tracked
     if !filereadable(abs)
@@ -6321,7 +6390,8 @@ function! s:discard_file_diff() abort
     return
   endif
 
-  let unstaged = s:git_run(state.root, 'diff --quiet -- ' . pathspec)
+  let unstaged = s:git_run(state.root,
+        \ ['diff', '--quiet', '--', literal])
   if unstaged.code == 0
     echomsg 'No unstaged changes: ' . path
     return
@@ -6334,7 +6404,7 @@ function! s:discard_file_diff() abort
     return
   endif
 
-  if !s:git_do(state.root, 'checkout -- ' . pathspec)
+  if !s:git_do(state.root, ['checkout', '--', literal])
     return
   endif
   if get(state, 'editable', 0) && s:win_exists(state.new_win)
