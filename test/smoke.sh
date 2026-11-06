@@ -46,6 +46,8 @@ let g:out = $GC_OUT
 let g:repo = $GC_REPO
 let g:other = $GC_OTHER
 let g:git_changes_statusline_delay = 0
+let g:git_changes_refresh_debounce_ms = 0
+let g:git_changes_debounce_ms = 0
 
 function! WaitMain() abort
   let n = 0
@@ -103,6 +105,19 @@ for i in range(40)
 endfor
 call Check('blame async', a2 =~# 'smoke', a2)
 
+" --- scratch buffer updates -----------------------------------------------
+let tbuf = bufadd('git_changes_set_lines_test')
+call bufload(tbuf)
+let r1 = git_changes#core_set_lines(tbuf, ['a', 'b'])
+let r2 = git_changes#core_set_lines(tbuf, ['a', 'b'])
+let r3 = git_changes#core_set_lines(tbuf, ['a', 'c'])
+let r4 = git_changes#core_set_lines(tbuf, ['a'])
+call Check('set_lines caching',
+      \ [r1, r2, r3, r4] == [1, 0, 1, 1]
+      \ && getbufline(tbuf, 1, '$') == ['a'],
+      \ string([r1, r2, r3, r4]))
+execute 'silent! bwipeout! ' . tbuf
+
 " --- blame pane -----------------------------------------------------------
 GitChangesBlame
 let bp = get(b:, 'git_changes_blame', {})
@@ -140,6 +155,14 @@ call Check('main stage key', index(staged, 'a.txt') >= 0, join(staged, ','))
 normal u
 let staged = systemlist(['git', '-C', g:repo, 'diff', '--cached', '--name-only'])
 call Check('main unstage key', index(staged, 'a.txt') < 0, join(staged, ','))
+
+" Refresh keeps the selected commit and file.
+let before_commit = st.commit_index
+normal r
+sleep 300m
+call Check('main refresh key',
+      \ st.commit_index == before_commit && len(st.files) == 2,
+      \ 'commit=' . st.commit_index . ' files=' . len(st.files))
 
 " statusline text should be set for the files pane
 let pane_sl = getwinvar(st.files_win, '&statusline')

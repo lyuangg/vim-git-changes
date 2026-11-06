@@ -522,27 +522,52 @@ function! s:new_scratch(name, filetype) abort
   return buf
 endfunction
 
+" Signature used to skip redundant scratch-buffer updates without copying the
+" whole buffer with getbufline() first.
+function! s:lines_signature(lines) abort
+  let text = join(a:lines, "\n")
+  if exists('*sha256')
+    return len(a:lines) . ':' . sha256(text)
+  endif
+  return len(a:lines) . ':' . hash(text)
+endfunction
+
 function! s:set_lines(buf, lines) abort
   if !bufexists(a:buf)
     return 0
   endif
 
   let target = empty(a:lines) ? [''] : a:lines
-  let current = getbufline(a:buf, 1, '$')
-  if current ==# target
-    return 0
+  let signature = s:lines_signature(target)
+  let cached = getbufvar(a:buf, 'git_changes_set_lines', {})
+  let tick = getbufvar(a:buf, 'changedtick', 0)
+  if !empty(cached) && cached.tick == tick
+    if cached.signature ==# signature
+      return 0
+    endif
+  else
+    " The buffer changed behind our back; make sure it is not already correct.
+    let current = getbufline(a:buf, 1, '$')
+    if current ==# target
+      call setbufvar(a:buf, 'git_changes_set_lines',
+            \ {'tick': tick, 'signature': signature})
+      return 0
+    endif
   endif
 
+  let line_count = s:buf_linecount(a:buf)
   let was_modifiable = getbufvar(a:buf, '&modifiable')
   call setbufvar(a:buf, '&modifiable', 1)
   try
     call setbufline(a:buf, 1, target)
-    if len(current) > len(target)
+    if line_count > len(target)
       silent call deletebufline(a:buf, len(target) + 1, '$')
     endif
   finally
     call setbufvar(a:buf, '&modifiable', was_modifiable ? 1 : 0)
   endtry
+  call setbufvar(a:buf, 'git_changes_set_lines',
+        \ {'tick': getbufvar(a:buf, 'changedtick', 0), 'signature': signature})
   return 1
 endfunction
 
@@ -1287,13 +1312,7 @@ function! s:after_refresh_files(state, entry, keep_path, old_index) abort
     return
   endif
 
-  let new_index = -1
-  for i in range(len(a:state.files))
-    if a:state.files[i].path ==# a:keep_path
-      let new_index = i
-      break
-    endif
-  endfor
+  let new_index = get(a:state.file_index_by_path, a:keep_path, -1)
   if new_index < 0
     let new_index = min([max([a:old_index, 0]), len(a:state.files) - 1])
   endif
@@ -1339,6 +1358,46 @@ function! s:refresh_all() abort
         \ {-> s:apply_pending_refresh(state)})
 endfunction
 
+" Path of the currently selected file, or '' when no file is selected.
+function! s:current_file_path(state) abort
+  if a:state.file_index >= 0 && a:state.file_index < len(a:state.files)
+    return a:state.files[a:state.file_index].path
+  endif
+  return ''
+endfunction
+
+" Find the commit to keep selected after a reload. Prefer the same sha, then
+" the same kind (worktree/compare), then the clamped old index.
+function! s:find_commit_index(state, sha, kind, fallback) abort
+  if !empty(a:sha)
+    for i in range(len(a:state.commits))
+      if get(a:state.commits[i], 'sha', '') ==# a:sha
+        return i
+      endif
+    endfor
+  elseif !empty(a:kind)
+    for i in range(len(a:state.commits))
+      if get(a:state.commits[i], 'kind', '') ==# a:kind
+        return i
+      endif
+    endfor
+  endif
+
+  if empty(a:state.commits)
+    return -1
+  endif
+  return min([max([a:fallback, 0]), len(a:state.commits) - 1])
+endfunction
+
+function! s:set_commit_cursor(state, index) abort
+  if a:index < 0
+    return
+  endif
+  let a:state.commit_index = a:index
+  call s:set_cursor(a:state.commits_win,
+        \ a:state.commits_header + 1 + a:index)
+endfunction
+
 function! s:do_refresh_all(state) abort
   let state = a:state
   if !s:state_alive(state)
@@ -1356,10 +1415,7 @@ function! s:do_refresh_all(state) abort
     let keep_sha = get(entry, 'sha', '')
   endif
 
-  let keep_path = ''
-  if state.file_index >= 0 && state.file_index < len(state.files)
-    let keep_path = state.files[state.file_index].path
-  endif
+  let keep_path = s:current_file_path(state)
 
   let keep_branch = ''
   if state.branch_index >= 0 && state.branch_index < len(state.branches)
@@ -1383,26 +1439,9 @@ function! s:after_refresh_all(state, keep_kind, keep_sha, keep_index, keep_path)
     return
   endif
 
-  let new_index = -1
-  for i in range(len(a:state.commits))
-    let candidate = a:state.commits[i]
-    if !empty(a:keep_sha)
-      if get(candidate, 'sha', '') ==# a:keep_sha
-        let new_index = i
-        break
-      endif
-    elseif candidate.kind ==# a:keep_kind
-      let new_index = i
-      break
-    endif
-  endfor
-  if new_index < 0
-    let new_index = min([max([a:keep_index, 0]), len(a:state.commits) - 1])
-  endif
-
-  let a:state.commit_index = new_index
-  call s:set_cursor(a:state.commits_win,
-        \ a:state.commits_header + 1 + new_index)
+  let new_index = s:find_commit_index(a:state, a:keep_sha,
+        \ a:keep_kind, a:keep_index)
+  call s:set_commit_cursor(a:state, new_index)
   call s:refresh_file_list(a:state, a:keep_path)
 
   call s:set_status(a:state, 'Refreshed', 'info')
@@ -1840,16 +1879,7 @@ function! s:after_reword_reload(state, sha) abort
   if !s:state_alive(a:state)
     return
   endif
-  let index = -1
-  for i in range(len(a:state.commits))
-    if get(a:state.commits[i], 'sha', '') ==# a:sha
-      let index = i
-      break
-    endif
-  endfor
-  if index < 0 && !empty(a:state.commits)
-    let index = 0
-  endif
+  let index = s:find_commit_index(a:state, a:sha, '', 0)
   if index >= 0
     call s:select_commit(a:state, index)
   endif
@@ -2251,10 +2281,7 @@ endfunction
 
 function! s:refresh_after_push(state) abort
   let index = a:state.commit_index
-  let keep_path = ''
-  if a:state.file_index >= 0 && a:state.file_index < len(a:state.files)
-    let keep_path = a:state.files[a:state.file_index].path
-  endif
+  let keep_path = s:current_file_path(a:state)
 
   call s:load_commits(a:state, 'reload',
         \ function('s:after_push_reload', [a:state, index, keep_path]))
@@ -2269,10 +2296,8 @@ function! s:after_push_reload(state, index, keep_path) abort
     return
   endif
 
-  let index = min([max([a:index, 0]), len(a:state.commits) - 1])
-  let a:state.commit_index = index
-  call s:set_cursor(a:state.commits_win,
-        \ a:state.commits_header + 1 + index)
+  let index = s:find_commit_index(a:state, '', '', a:index)
+  call s:set_commit_cursor(a:state, index)
   call s:refresh_file_list(a:state, a:keep_path)
 endfunction
 
@@ -2414,10 +2439,7 @@ function! s:stage_all() abort
     return
   endif
 
-  let keep_path = ''
-  if state.file_index >= 0 && state.file_index < len(state.files)
-    let keep_path = state.files[state.file_index].path
-  endif
+  let keep_path = s:current_file_path(state)
 
   if !s:git_do(state.root, ['add', '-A', '--', '.'])
     return
@@ -2447,10 +2469,7 @@ function! s:unstage_all() abort
     return
   endif
 
-  let keep_path = ''
-  if state.file_index >= 0 && state.file_index < len(state.files)
-    let keep_path = state.files[state.file_index].path
-  endif
+  let keep_path = s:current_file_path(state)
 
   if !s:git_do(state.root, ['reset', '-q', 'HEAD', '--', '.'])
     return
@@ -3092,6 +3111,11 @@ function! s:render_files(state, entry, files) abort
   let a:state.file_line_map = line_map
   let a:state.file_line_for_index = file_line_for_index
   let a:state.display_file_indexes = display_indexes
+  let index_by_path = {}
+  for index in range(len(a:files))
+    let index_by_path[a:files[index].path] = index
+  endfor
+  let a:state.file_index_by_path = index_by_path
 
   let lines = header_lines + body
   call s:set_lines(a:state.files_buf, lines)
@@ -3126,12 +3150,7 @@ function! s:current_file_index(state) abort
     if empty(shown)
       return -1
     endif
-    for i in range(len(a:state.files))
-      if a:state.files[i].path ==# shown.path
-        return i
-      endif
-    endfor
-    return -1
+    return get(a:state.file_index_by_path, shown.path, -1)
   endif
   return a:state.file_index
 endfunction
@@ -3982,10 +4001,8 @@ function! s:select_commit(state, index) abort
   endif
 
   call s:cancel_pending(a:state)
-  let a:state.commit_index = a:index
   call s:clear_files_state(a:state)
-  call s:set_cursor(a:state.commits_win,
-        \ a:state.commits_header + 1 + a:index)
+  call s:set_commit_cursor(a:state, a:index)
   let entry = a:state.commits[a:index]
   call s:load_files(a:state, entry,
         \ function('s:after_select_files', [a:state, entry]))
@@ -4191,6 +4208,7 @@ function! s:new_state(root, parsed, id) abort
         \ 'file_line_map': [],
         \ 'file_line_for_index': [],
         \ 'display_file_indexes': [],
+        \ 'file_index_by_path': {},
         \ 'branches': [],
         \ 'branch_index': -1,
         \ 'branch_header': 2,
@@ -4444,389 +4462,11 @@ function! git_changes#diff_quit() abort
   call s:close_file_diff(state)
 endfunction
 
-let s:gitdir_cache = {}
-
-" Find the git directory for {dir} without running git: walk up to .git and
-" follow the "gitdir:" file used by worktrees and submodules.
-function! s:git_dir_for(dir) abort
-  let dir = simplify(fnamemodify(a:dir, ':p'))
-  while len(dir) > 1 && dir[-1:] ==# '/'
-    let dir = dir[:-2]
-  endwhile
-  if has_key(s:gitdir_cache, dir)
-    return s:gitdir_cache[dir]
-  endif
-
-  let result = ''
-  let root = s:repo_root_for(dir)
-  if !empty(root)
-    let candidate = root . '/.git'
-    if isdirectory(candidate)
-      let result = candidate
-    elseif filereadable(candidate)
-      let line = get(readfile(candidate, '', 1), 0, '')
-      let gitdir = matchstr(line, '^gitdir:\s*\zs.*')
-      if !empty(gitdir)
-        if gitdir !~# '^/'
-          let gitdir = simplify(root . '/' . gitdir)
-        endif
-        let result = gitdir
-      endif
-    endif
-  endif
-
-  let s:gitdir_cache[dir] = result
-  if len(s:gitdir_cache) > 200
-    call filter(s:gitdir_cache, 'v:val !=# ""')
-    if len(s:gitdir_cache) > 200
-      let s:gitdir_cache = {}
-    endif
-  endif
-  return result
-endfunction
-
-" Lightweight statusline helper: [Git(branch)] inside a repository. The branch
-" comes from .git/HEAD directly, so it follows the current buffer's repository
-" instead of the working directory. The unstaged marker is computed by a
-" background job and never blocks the statusline.
-let s:statusline_text_cache = {}
-let s:statusline_last = {}
-let s:statusline_timer = -1
-let s:statusline_unstaged_cache = {}
-let s:statusline_unstaged_jobs = {}
-let s:statusline_unstaged_interval = 1000
-
-function! s:statusline_mode_ok() abort
-  return mode() ==# 'n' || mode() ==# 'c'
-endfunction
-
-function! s:statusline_delay() abort
-  let value = get(g:, 'git_changes_statusline_delay', 500)
-  return type(value) == type(0) && value > 0 ? value : 0
-endfunction
-
-function! s:schedule_statusline_redraw() abort
-  if s:statusline_timer != -1 || !exists('*timer_start')
-    return
-  endif
-  let s:statusline_timer = timer_start(s:statusline_delay(),
-        \ {-> s:redraw_statusline()})
-endfunction
-
-function! s:redraw_statusline() abort
-  let s:statusline_timer = -1
-  if s:statusline_mode_ok()
-    silent! redrawstatus
-  endif
-endfunction
-
-" Whether the current file has unstaged changes, checked in the background so
-" statusline redraws stay fast. One job per repository collects the whole
-" worktree status, and every buffer in that repository shares the result. This
-" avoids spawning a git process per buffer (and avoids refreshing the index
-" once per buffer) on every statusline tick.
-function! s:statusline_unstaged(root, path) abort
-  let cached = get(s:statusline_unstaged_cache, a:root, {})
-
-  " Drop jobs whose buffer was wiped before the callback could run.
-  for root in keys(s:statusline_unstaged_jobs)
-    let job = s:statusline_unstaged_jobs[root]
-    if !bufexists(get(job.state, 'files_buf', -1))
-      call s:job_stop(job.state, 'unstaged')
-      if has_key(s:statusline_unstaged_jobs, root)
-        call remove(s:statusline_unstaged_jobs, root)
-      endif
-    endif
-  endfor
-
-  if empty(cached)
-        \ || reltimefloat(reltime(cached.time)) * 1000
-        \      >= s:statusline_unstaged_interval
-    if !has_key(s:statusline_unstaged_jobs, a:root)
-      call s:start_statusline_unstaged_job(a:root)
-    endif
-  endif
-
-  return empty(cached) ? 0 : get(cached.files, a:path, 0)
-endfunction
-
-function! s:start_statusline_unstaged_job(root) abort
-  let fake = {'files_buf': bufnr('%'), 'root': a:root, 'unstaged_tok': 1}
-  let ctx = {'root': a:root, 'state': fake}
-  let s:statusline_unstaged_jobs[a:root] = {'state': fake, 'ctx': ctx}
-  call s:git_job(fake, 'unstaged', 'unstaged_tok', 1,
-        \ ['status', '--porcelain=v1', '--untracked-files=normal'],
-        \ function('s:on_statusline_unstaged_job', [ctx]))
-endfunction
-
-function! s:on_statusline_unstaged_job(ctx, result) abort
-  let root = a:ctx.root
-  let job = get(s:statusline_unstaged_jobs, root, {})
-  if empty(job) || job.state isnot a:ctx.state
-    return
-  endif
-  call remove(s:statusline_unstaged_jobs, root)
-
-  let files = {}
-  for file in s:parse_worktree_status(a:result.out)
-    let xy = get(file, 'status_text', '')
-    if xy ==# '??'
-          \ || (strlen(xy) >= 2 && strpart(xy, 1, 1) !=# ' ')
-      let files[file.path] = 1
-      if !empty(get(file, 'oldpath', ''))
-        let files[file.oldpath] = 1
-      endif
-    endif
-  endfor
-
-  let s:statusline_unstaged_cache[root] = {
-        \ 'time': reltime(),
-        \ 'files': files,
-        \ }
-  if len(s:statusline_unstaged_cache) > 50
-    call filter(s:statusline_unstaged_cache,
-          \ 'reltimefloat(reltime(v:val.time)) * 1000 < 60000')
-  endif
-
-  if s:statusline_mode_ok()
-    silent! redrawstatus
-  endif
-endfunction
-
-function! s:statusline_unstaged_marker() abort
-  let marker = get(g:, 'git_changes_statusline_unstaged', '*')
-  if type(marker) != type('') || empty(marker)
-    return ''
-  endif
-  if &buftype !=# ''
-    return ''
-  endif
-
-  let [root, path] = s:buffer_repo_path()
-  if empty(root) || empty(path)
-    return ''
-  endif
-  return s:statusline_unstaged(root, path) ? marker : ''
-endfunction
-
-function! git_changes#statusline() abort
-  let file = expand('%:p')
-  if !empty(file)
-    let file = resolve(file)
-  endif
-  let dir = empty(file) ? '' : fnamemodify(file, ':h')
-  if empty(dir)
-    let dir = getcwd()
-  endif
-  let key = dir . nr2char(31) . file
-
-  " Refresh only in normal mode; in insert/visual mode show the last value.
-  if !s:statusline_mode_ok()
-    return get(s:statusline_text_cache, key, '')
-  endif
-
-  let delay = s:statusline_delay()
-  let last = get(s:statusline_last, key, [])
-  if delay > 0 && !empty(last)
-        \ && reltimefloat(reltime(last[0])) * 1000 < delay
-    call s:schedule_statusline_redraw()
-    return last[1]
-  endif
-
-  let gitdir = s:git_dir_for(dir)
-  if empty(gitdir)
-    return ''
-  endif
-
-  let head = get(readfile(gitdir . '/HEAD', '', 1), 0, '')
-  if head =~# '^ref: '
-    let branch = substitute(strpart(head, 5), '^refs/heads/', '', '')
-    let label = 'Git(' . branch . ')'
-  elseif head =~# '^[0-9a-f]\{40\}'
-    let label = 'Git(' . strpart(head, 0, 7) . ')'
-  else
-    let label = 'Git'
-  endif
-
-  let text = '[' . label . s:statusline_unstaged_marker() . ']'
-  let s:statusline_text_cache[key] = text
-  let s:statusline_last[key] = [reltime(), text]
-  if len(s:statusline_last) > 200
-    let now = reltime()
-    call filter(s:statusline_last,
-          \ 'reltimefloat(reltime(v:val[0], now)) < 60')
-    call filter(s:statusline_text_cache, 'has_key(s:statusline_last, v:key)')
-  endif
-  return text
-endfunction
-
-let s:blame_line_cache = {}
-let s:blame_line_jobs = {}
-let s:blame_debounce = {}
-
-" Release per-buffer caches when their buffer disappears. Without this,
-" s:blame_debounce keeps an entry per edited buffer for the whole session.
-function! s:clear_buffer_caches(buf) abort
-  let st = get(s:blame_debounce, a:buf, {})
-  if !empty(st)
-    call remove(s:blame_debounce, a:buf)
-    if st.timer != -1
-      call timer_stop(st.timer)
-    endif
-  endif
-  let prefix = a:buf . ':'
-  call filter(s:blame_line_cache, 'stridx(v:key, prefix) != 0')
-endfunction
-
-augroup git_changes_buffer_cache
-  autocmd!
-  autocmd BufWipeout * call s:clear_buffer_caches(str2nr(expand('<abuf>')))
-augroup END
-
+" The heavy lifting for the statusline and blame-line API lives in
+" autoload/git_changes/statusline.vim so it is loaded lazily.
 function! s:statusline_clear() abort
-  let s:gitdir_cache = {}
   let s:repo_root_cache = {}
-  let s:statusline_text_cache = {}
-  let s:statusline_last = {}
-  let s:statusline_unstaged_cache = {}
-  if s:statusline_timer != -1
-    call timer_stop(s:statusline_timer)
-    let s:statusline_timer = -1
-  endif
-  for job in values(s:statusline_unstaged_jobs)
-    call s:job_stop(job.state, 'unstaged')
-  endfor
-  let s:statusline_unstaged_jobs = {}
-  let s:blame_line_cache = {}
-  for st in values(s:blame_debounce)
-    if st.timer != -1
-      call timer_stop(st.timer)
-    endif
-  endfor
-  let s:blame_debounce = {}
-  for job in values(s:blame_line_jobs)
-    call s:job_stop(job.state, 'blame_line')
-    if !empty(job.ctx.contents)
-      call delete(job.ctx.contents)
-    endif
-  endfor
-  let s:blame_line_jobs = {}
-endfunction
-
-function! s:parse_blame_entries(out) abort
-  let entries = []
-  let meta = {}
-  let i = 0
-  let total = len(a:out)
-
-  while i < total
-    let line = a:out[i]
-    if line !~# '^[0-9a-f]\{40\} '
-      let i += 1
-      continue
-    endif
-
-    let sha = strpart(line, 0, 40)
-    let author = ''
-    let email = ''
-    let date = ''
-    let summary = ''
-    let i += 1
-    while i < total && a:out[i][0] !=# "\t"
-      let field = a:out[i]
-      " Prefix checks are much cheaper than a regex per metadata field.
-      if strpart(field, 0, 7) ==# 'author '
-        let author = strpart(field, 7)
-      elseif strpart(field, 0, 12) ==# 'author-mail '
-        let email = substitute(strpart(field, 12), '^<\(.*\)>$', '\1', '')
-      elseif strpart(field, 0, 12) ==# 'author-time '
-        let date = strftime('%Y-%m-%d', str2nr(strpart(field, 12)))
-      elseif strpart(field, 0, 8) ==# 'summary '
-        let summary = strpart(field, 8)
-      endif
-      let i += 1
-    endwhile
-
-    if sha =~# '^0\+$'
-      let author = 'Uncommitted'
-      let email = ''
-      let summary = ''
-    endif
-
-    if !empty(author)
-      let meta[sha] = [author, email, date, summary]
-    elseif has_key(meta, sha)
-      let [author, email, date, summary] = meta[sha]
-    endif
-
-    if i < total && a:out[i][0] ==# "\t"
-      let i += 1
-    endif
-
-    call add(entries, {
-          \ 'sha': sha =~# '^0\+$' ? '' : strpart(sha, 0, 8),
-          \ 'author': author,
-          \ 'email': email,
-          \ 'date': date,
-          \ 'summary': summary,
-          \ })
-  endwhile
-  return entries
-endfunction
-
-" Cache key for one line's blame. Including the line number keeps a cursor
-" move from reusing (or invalidating) another line's cached entry.
-function! s:blame_key(buf, tick, lnum) abort
-  return a:buf . ':' . a:tick . ':' . a:lnum
-endfunction
-
-function! s:blame_args(path, lnum, contents) abort
-  let args = ['-c', 'color.ui=false', 'blame', '--line-porcelain',
-        \ '-L', a:lnum . ',' . a:lnum]
-  if !empty(a:contents)
-    call extend(args, ['--contents', a:contents])
-  endif
-  call extend(args, ['--', a:path])
-  return args
-endfunction
-
-" Blame a single line. Blaming the whole file just to read one line is very
-" expensive on large files, so limit git to the requested line.
-function! s:blame_line_entry(root, path, lnum) abort
-  let buf = bufnr('%')
-  let key = s:blame_key(buf, getbufvar(buf, 'changedtick', 0), a:lnum)
-  let now = localtime()
-  let cached = get(s:blame_line_cache, key, {})
-  if !empty(cached) && now - cached.time < 5
-    return cached.entry
-  endif
-
-  let contents = ''
-  if &modified
-    let contents = tempname()
-    call writefile(getline(1, '$'), contents)
-  endif
-
-  let entry = {}
-  try
-    let result = s:git_run(a:root, s:blame_args(a:path, a:lnum, contents))
-    if result.ok
-      let entries = s:parse_blame_entries(result.out)
-      if !empty(entries)
-        let entry = entries[0]
-      endif
-    endif
-  finally
-    if !empty(contents)
-      call delete(contents)
-    endif
-  endtry
-
-  let s:blame_line_cache[key] = {'time': now, 'entry': entry}
-  if len(s:blame_line_cache) > 200
-    call filter(s:blame_line_cache, 'localtime() - v:val.time < 30')
-  endif
-  return entry
+  call git_changes#statusline#clear()
 endfunction
 
 " Resolve the current buffer's worktree root and repo-relative path without
@@ -4847,155 +4487,28 @@ function! s:buffer_repo_path() abort
   return [root, s:repo_relative_path(root, file)]
 endfunction
 
-" Blame data for the current line: {sha, author, email, date, summary}.
+" Public wrappers keep the documented API stable while the implementation is
+" loaded lazily from autoload/git_changes/statusline.vim.
+function! git_changes#statusline() abort
+  return git_changes#statusline#text()
+endfunction
+
 function! git_changes#blame_line_info() abort
-  let [root, path] = s:buffer_repo_path()
-  if empty(root) || empty(path) || !filereadable(root . '/' . path)
-    return {}
-  endif
-
-  let lnum = line('.')
-  if lnum < 1
-    return {}
-  endif
-  return s:blame_line_entry(root, path, lnum)
+  return git_changes#statusline#blame_line_info()
 endfunction
 
-function! s:format_blame_line(info) abort
-  let text = get(g:, 'git_changes_blame_line_format', '%a %d')
-  for [key, value] in items({'h': a:info.sha, 'a': a:info.author,
-        \ 'e': a:info.email, 'd': a:info.date, 's': a:info.summary})
-    let text = substitute(text, '%' . key, escape(value, '\&~'), 'g')
-  endfor
-  return trim(text)
-endfunction
-
-" Formatted blame for the current line. g:git_changes_blame_line_format
-" supports %h (short hash), %a (author), %e (email), %d (date), %s (summary).
 function! git_changes#blame_line() abort
-  let info = git_changes#blame_line_info()
-  return empty(info) ? '' : s:format_blame_line(info)
+  return git_changes#statusline#blame_line()
 endfunction
 
-function! s:start_blame_line_job(root, path, key, lnum) abort
-  let contents = ''
-  if &modified
-    let contents = tempname()
-    call writefile(getline(1, '$'), contents)
-  endif
-
-  let args = s:blame_args(a:path, a:lnum, contents)
-
-  let fake = {'files_buf': bufnr('%'), 'root': a:root, 'blame_tok': 1}
-  let ctx = {'key': a:key, 'contents': contents, 'state': fake}
-  let s:blame_line_jobs[a:key] = {'state': fake, 'ctx': ctx}
-  call s:git_job(fake, 'blame_line', 'blame_tok', 1, args,
-        \ function('s:on_blame_line_job', [ctx]))
-endfunction
-
-function! s:on_blame_line_job(ctx, result) abort
-  let key = a:ctx.key
-  let job = get(s:blame_line_jobs, key, {})
-  if empty(job) || job.state isnot a:ctx.state
-    return
-  endif
-  call remove(s:blame_line_jobs, key)
-  if !empty(a:ctx.contents)
-    call delete(a:ctx.contents)
-  endif
-  let entries = empty(a:result.out)
-        \ ? [] : s:parse_blame_entries(a:result.out)
-  let s:blame_line_cache[key] = {
-        \ 'time': localtime(),
-        \ 'entry': empty(entries) ? {} : entries[0],
-        \ }
-  if len(s:blame_line_cache) > 200
-    call filter(s:blame_line_cache, 'localtime() - v:val.time < 30')
-  endif
-  if s:statusline_mode_ok()
-    silent! redrawstatus
-  endif
-endfunction
-
-" Asynchronous variant for statuslines: returns cached data immediately and
-" starts a background blame when the cache is missing or stale.
 function! git_changes#blame_line_info_async() abort
-  let [root, path] = s:buffer_repo_path()
-  if empty(root) || empty(path) || !filereadable(root . '/' . path)
-    return {}
-  endif
-
-  let buf = bufnr('%')
-  let lnum = line('.')
-  if lnum < 1
-    return {}
-  endif
-  let key = s:blame_key(buf, getbufvar(buf, 'changedtick', 0), lnum)
-  let now = localtime()
-  let cached = get(s:blame_line_cache, key, {})
-
-  " Do not start or refresh jobs outside normal mode.
-  if !s:statusline_mode_ok()
-    return empty(cached) ? {} : cached.entry
-  endif
-
-  if empty(cached) || now - cached.time >= 10
-    if !has_key(s:blame_line_jobs, key)
-      call s:start_blame_line_job(root, path, key, lnum)
-    endif
-  endif
-
-  return empty(cached) ? {} : cached.entry
-endfunction
-
-function! s:blame_debounce_fire(buf) abort
-  let st = get(s:blame_debounce, a:buf, {})
-  if empty(st)
-    return
-  endif
-  let st.timer = -1
-  let st.ready = st.want
-  if s:statusline_mode_ok()
-    silent! redrawstatus
-  endif
+  return git_changes#statusline#blame_line_info_async()
 endfunction
 
 function! git_changes#blame_line_async() abort
-  let buf = bufnr('%')
-  let key = buf . ':' . getbufvar(buf, 'changedtick', 0)
-        \ . ':' . expand('%:p') . ':' . line('.')
-  let delay = s:statusline_delay()
-  let st = get(s:blame_debounce, buf, {})
-  if empty(st)
-    let st = {'want': '', 'ready': '', 'shown': {}, 'timer': -1}
-    let s:blame_debounce[buf] = st
-  endif
-
-  if !empty(st.shown) && get(st.shown, 'key', '') ==# key
-    return st.shown.text
-  endif
-
-  " Debounce: wait until the cursor stops moving before updating.
-  if delay > 0 && st.ready !=# key
-    if st.timer != -1
-      call timer_stop(st.timer)
-    endif
-    let st.want = key
-    let st.timer = timer_start(delay, {-> s:blame_debounce_fire(buf)})
-    return empty(st.shown) ? '' : st.shown.text
-  endif
-
-  let info = git_changes#blame_line_info_async()
-  let text = empty(info) ? '' : s:format_blame_line(info)
-  if !empty(info)
-    let st.shown = {'key': key, 'text': text}
-    let st.ready = ''
-  else
-    " The background job is still running; poll again on the next redraw.
-    let st.ready = key
-  endif
-  return text
+  return git_changes#statusline#blame_line_async()
 endfunction
+
 
 " Resolve an optional command argument to a path relative to the repo root.
 function! s:resolve_path_arg(root, arg) abort
@@ -6554,259 +6067,84 @@ function! git_changes#complete_diff(arglead, cmdline, cursorpos) abort
 endfunction
 
 
-" ============================================================================
-" GitChangesBlame
-"
-" A read-only pane on the left of the current file with one blame line per
-" file line. Both windows scroll and move together; q closes the pane.
-" ============================================================================
-
-" Start git blame in the background. The pane is created first with empty
-" lines, so opening it does not block on Git.
-function! s:start_blame_job(info, contents) abort
-  let args = ['-c', 'color.ui=false', '-c', 'blame.coloring=none',
-        \ '-c', 'blame.blankBoundary=false', 'blame', '--show-number']
-  if !empty(a:contents)
-    call extend(args, ['--contents', a:contents])
-  endif
-  call extend(args, ['--', a:info.path])
-
-  let fake = {
-        \ 'files_buf': a:info.buf,
-        \ 'root': a:info.root,
-        \ 'blame_pane_tok': 1,
-        \ }
-  let a:info.state = fake
-  call s:git_job(fake, 'blame_pane', 'blame_pane_tok', 1, args,
-        \ function('s:on_blame_job', [a:info]))
-endfunction
-
-function! s:on_blame_job(info, result) abort
-  let info = a:info
-  if !empty(get(info, 'contents', ''))
-    call delete(info.contents)
-    let info.contents = ''
-  endif
-  if !bufexists(get(info, 'buf', -1))
-        \ || !s:win_exists(get(info, 'win', 0))
-    return
-  endif
-
-  let lines = copy(a:result.out)
-  let target = s:buf_linecount(get(info, 'file_buf', -1))
-  if target < 1
-    let target = 1
-  endif
-  if empty(lines) && target > 1
-    call s:err('git blame failed')
-    let lines = ['git blame failed']
-  endif
-  while len(lines) < target
-    call add(lines, '')
-  endwhile
-  if len(lines) > target
-    call remove(lines, target, -1)
-  endif
-
-  call s:set_lines(info.buf, lines)
-endfunction
-
-function! s:blame_cleanup(...) abort
-  let info = a:0 ? a:1 : get(b:, 'git_changes_blame', {})
-  if empty(info)
-    return
-  endif
-
-  if !empty(get(info, 'state', {}))
-    call s:job_stop(info.state, 'blame_pane')
-  endif
-  if !empty(get(info, 'contents', ''))
-    call delete(info.contents)
-    let info.contents = ''
-  endif
-  let s:blame_cursor_sync = []
-
-  let file_win = get(info, 'file_win', 0)
-  if s:win_exists(file_win)
-    let options = [
-          \ get(info, 'file_wrap', 1) ? 'wrap' : 'nowrap',
-          \ get(info, 'file_scrollbind', 0) ? 'scrollbind' : 'noscrollbind',
-          \ get(info, 'file_cursorbind', 0) ? 'cursorbind' : 'nocursorbind',
-          \ get(info, 'file_foldenable', 1) ? 'foldenable' : 'nofoldenable',
-          \ ]
-    call win_execute(file_win, 'setlocal ' . join(options, ' '))
-  endif
-
-  for buf in [get(info, 'file_buf', -1), get(info, 'buf', -1)]
-    if buf > 0 && bufexists(buf)
-      call setbufvar(buf, 'git_changes_blame', {})
-    endif
-  endfor
-endfunction
-
-function! s:blame_close_info(info) abort
-  if empty(a:info)
-    return
-  endif
-  call s:blame_cleanup(a:info)
-
-  let win = get(a:info, 'win', 0)
-  if s:win_exists(win)
-    if win == win_getid()
-      close
-    else
-      call win_execute(win, 'close')
-    endif
-  endif
-
-  let buf = get(a:info, 'buf', -1)
-  if bufexists(buf)
-    execute 'silent! bwipeout! ' . buf
-  endif
-endfunction
-
-function! s:blame_close() abort
-  let info = get(b:, 'git_changes_blame', {})
-  if empty(info)
-    return
-  endif
-  call s:blame_close_info(info)
-endfunction
-
-" Match fugitive's behavior: scrollbind (not cursorbind) keeps the windows
-" aligned, while the cursor line follows when focus moves between them.
-let s:blame_cursor_sync = []
-
-function! s:blame_record_cursor() abort
-  let info = get(b:, 'git_changes_blame', {})
-  if empty(info)
-    return
-  endif
-  let win = win_getid()
-  if win == get(info, 'file_win', 0)
-    let s:blame_cursor_sync = [get(info, 'win', 0), line('.')]
-  elseif win == get(info, 'win', 0)
-    let s:blame_cursor_sync = [get(info, 'file_win', 0), line('.')]
-  endif
-endfunction
-
-function! s:blame_apply_cursor() abort
-  if empty(s:blame_cursor_sync)
-    return
-  endif
-  let [win, lnum] = s:blame_cursor_sync
-  let s:blame_cursor_sync = []
-  if win_getid() != win || !s:win_exists(win)
-    return
-  endif
-  let pos = getpos('.')
-  let pos[1] = lnum
-  call setpos('.', pos)
-endfunction
-
-augroup git_changes_blame_sync
-  autocmd!
-  autocmd WinLeave * call s:blame_record_cursor()
-  autocmd WinEnter * call s:blame_apply_cursor()
-augroup END
-
+" The blame pane lives in autoload/git_changes/blame.vim.
 function! git_changes#blame() abort
-  let root = s:repo_root()
-  if empty(root)
-    call s:err('not inside a Git repository')
-    return
-  endif
-  if &buftype !=# ''
-    call s:err('GitChangesBlame: open a file first')
-    return
-  endif
-
-  let path = s:current_repo_path(root)
-  if empty(path)
-    call s:err('GitChangesBlame: the current file is not in this repository')
-    return
-  endif
-  if !filereadable(root . '/' . path)
-    call s:err('GitChangesBlame: file does not exist: ' . path)
-    return
-  endif
-
-  " Re-running the command replaces the existing blame pane.
-  if !empty(get(b:, 'git_changes_blame', {}))
-    call s:blame_close()
-  endif
-
-  let file_win = win_getid()
-  let file_buf = bufnr('%')
-  let file_wrap = &wrap
-  let file_scrollbind = &l:scrollbind
-  let file_cursorbind = &l:cursorbind
-  let file_foldenable = &l:foldenable
-  let modified = &modified
-  let file_line_count = line('$')
-
-  let contents = ''
-  if modified
-    let contents = tempname()
-    call writefile(getline(1, '$'), contents)
-  endif
-
-  " Match fugitive: use scrollbind only, and disable folds so both windows
-  " have the same visible lines.
-  setlocal scrollbind nowrap nofoldenable nocursorbind
-  let top = line('w0')
-  let cur_line = line('.')
-  let s:blame_cursor_sync = []
-
-  leftabove vertical split
-  let blame_win = win_getid()
-  let blame_buf = s:new_scratch(
-        \ printf('[GitChangesBlame %d] %s', file_buf, path), '')
-  call s:set_lines(blame_buf, repeat([''], max([1, file_line_count])))
-
-  setlocal scrollbind nowrap nofoldenable nocursorbind
-  setlocal nonumber norelativenumber nolist
-  setlocal signcolumn=no foldcolumn=0 nospell nomodeline
-  setlocal nomodifiable
-  let configured = get(g:, 'git_changes_blame_width', 40)
-  if type(configured) != type(0) || configured <= 0
-    let configured = 40
-  endif
-  execute 'vertical resize ' . max([12, configured])
-  setlocal winfixwidth
-  execute 'nnoremap <buffer> <silent> q '
-        \ . s:cmd_rhs(':<C-u>call ' . s:sid . 'blame_close()<CR>')
-
-  " Align the blame pane with the file window before loading the text.
-  execute top
-  normal! zt
-  execute cur_line
-  silent! syncbind
-
-  let info = {
-        \ 'win': blame_win,
-        \ 'buf': blame_buf,
-        \ 'file_win': file_win,
-        \ 'file_buf': file_buf,
-        \ 'file_wrap': file_wrap,
-        \ 'file_scrollbind': file_scrollbind,
-        \ 'file_cursorbind': file_cursorbind,
-        \ 'file_foldenable': file_foldenable,
-        \ 'contents': contents,
-        \ 'state': {},
-        \ 'root': root,
-        \ 'path': path,
-        \ }
-  let b:git_changes_blame = info
-  call setbufvar(file_buf, 'git_changes_blame', info)
-
-  augroup git_changes_blame
-    autocmd! * <buffer>
-    execute 'autocmd BufWipeout <buffer> call '
-          \ . s:sid . 'blame_cleanup()'
-  augroup END
-
-  redraw
-  call s:start_blame_job(info, contents)
+  call git_changes#blame#open()
 endfunction
 
+
+" ============================================================================
+" Module bridge
+"
+" Small public surface for the lazily loaded statusline and blame modules.
+" Keeping the implementations here avoids duplicating path, job, and buffer
+" helpers in every module.
+" ============================================================================
+
+function! git_changes#core_repo_root_for(dir) abort
+  return s:repo_root_for(a:dir)
+endfunction
+
+function! git_changes#core_repo_root() abort
+  return s:repo_root()
+endfunction
+
+function! git_changes#core_repo_relative_path(root, path) abort
+  return s:repo_relative_path(a:root, a:path)
+endfunction
+
+function! git_changes#core_buffer_repo_path() abort
+  return s:buffer_repo_path()
+endfunction
+
+function! git_changes#core_current_repo_path(root) abort
+  return s:current_repo_path(a:root)
+endfunction
+
+function! git_changes#core_parse_worktree_status(lines) abort
+  return s:parse_worktree_status(a:lines)
+endfunction
+
+function! git_changes#core_git_run(root, args) abort
+  return s:git_run(a:root, a:args)
+endfunction
+
+function! git_changes#core_git_job(state, key, token_key, token, args, callback) abort
+  call s:git_job(a:state, a:key, a:token_key, a:token, a:args, a:callback)
+endfunction
+
+function! git_changes#core_job_stop(state, key) abort
+  call s:job_stop(a:state, a:key)
+endfunction
+
+function! git_changes#core_state_alive(state) abort
+  return s:state_alive(a:state)
+endfunction
+
+function! git_changes#core_err(msg) abort
+  call s:err(a:msg)
+endfunction
+
+function! git_changes#core_truncate(text, max) abort
+  return s:truncate(a:text, a:max)
+endfunction
+
+function! git_changes#core_new_scratch(name, filetype) abort
+  return s:new_scratch(a:name, a:filetype)
+endfunction
+
+function! git_changes#core_set_lines(buf, lines) abort
+  return s:set_lines(a:buf, a:lines)
+endfunction
+
+function! git_changes#core_buf_linecount(buf) abort
+  return s:buf_linecount(a:buf)
+endfunction
+
+function! git_changes#core_win_exists(winid) abort
+  return s:win_exists(a:winid)
+endfunction
+
+function! git_changes#core_cmd_rhs(rhs) abort
+  return s:cmd_rhs(a:rhs)
+endfunction
