@@ -6491,61 +6491,96 @@ endfunction
 " file line. Both windows scroll and move together; q closes the pane.
 " ============================================================================
 
-function! s:blame_lines(root, path, modified) abort
-  let contents = ''
-  if a:modified
-    let contents = tempname()
-    call writefile(getline(1, '$'), contents)
+" Start git blame in the background. The pane is created first with empty
+" lines, so opening it does not block on Git.
+function! s:start_blame_job(info, contents) abort
+  let args = ['-c', 'color.ui=false', '-c', 'blame.coloring=none',
+        \ '-c', 'blame.blankBoundary=false', 'blame', '--show-number']
+  if !empty(a:contents)
+    call extend(args, ['--contents', a:contents])
   endif
+  call extend(args, ['--', a:info.path])
 
-  try
-    let cmd = 'git --no-pager -c core.quotePath=false -c color.ui=false -C '
-          \ . shellescape(a:root) . ' blame'
-    if !empty(contents)
-      let cmd .= ' --contents ' . shellescape(contents)
-    endif
-    let cmd .= ' -- ' . shellescape(a:path)
-    let out = systemlist(cmd)
-    if v:shell_error
-      call s:err('git blame failed: ' . s:output_message(out))
-      return []
-    endif
-    return out
-  finally
-    if !empty(contents)
-      call delete(contents)
-    endif
-  endtry
+  let fake = {
+        \ 'files_buf': a:info.buf,
+        \ 'root': a:info.root,
+        \ 'blame_pane_tok': 1,
+        \ }
+  let a:info.state = fake
+  call s:git_job(fake, 'blame_pane', 'blame_pane_tok', 1, args,
+        \ function('s:on_blame_job', [a:info]))
 endfunction
 
-function! s:blame_cleanup() abort
-  let info = get(b:, 'git_changes_blame', {})
+function! s:on_blame_job(info, result) abort
+  let info = a:info
+  if !empty(get(info, 'contents', ''))
+    call delete(info.contents)
+    let info.contents = ''
+  endif
+  if !bufexists(get(info, 'buf', -1))
+        \ || !s:win_exists(get(info, 'win', 0))
+    return
+  endif
+
+  let lines = copy(a:result.out)
+  let target = s:buf_linecount(get(info, 'file_buf', -1))
+  if target < 1
+    let target = 1
+  endif
+  if empty(lines) && target > 1
+    call s:err('git blame failed')
+    let lines = ['git blame failed']
+  endif
+  while len(lines) < target
+    call add(lines, '')
+  endwhile
+  if len(lines) > target
+    call remove(lines, target, -1)
+  endif
+
+  call s:set_lines(info.buf, lines)
+endfunction
+
+function! s:blame_cleanup(...) abort
+  let info = a:0 ? a:1 : get(b:, 'git_changes_blame', {})
   if empty(info)
     return
   endif
+
+  if !empty(get(info, 'state', {}))
+    call s:job_stop(info.state, 'blame_pane')
+  endif
+  if !empty(get(info, 'contents', ''))
+    call delete(info.contents)
+    let info.contents = ''
+  endif
+  let s:blame_cursor_sync = []
 
   let file_win = get(info, 'file_win', 0)
   if s:win_exists(file_win)
-    call win_execute(file_win,
-          \ 'setlocal noscrollbind nocursorbind '
-          \ . (get(info, 'file_wrap', 1) ? 'wrap' : 'nowrap'))
+    let options = [
+          \ get(info, 'file_wrap', 1) ? 'wrap' : 'nowrap',
+          \ get(info, 'file_scrollbind', 0) ? 'scrollbind' : 'noscrollbind',
+          \ get(info, 'file_cursorbind', 0) ? 'cursorbind' : 'nocursorbind',
+          \ get(info, 'file_foldenable', 1) ? 'foldenable' : 'nofoldenable',
+          \ ]
+    call win_execute(file_win, 'setlocal ' . join(options, ' '))
   endif
 
-  let file_buf = get(info, 'file_buf', -1)
-  if bufexists(file_buf)
-    call setbufvar(file_buf, 'git_changes_blame', {})
-  endif
-  silent! unlet! b:git_changes_blame
+  for buf in [get(info, 'file_buf', -1), get(info, 'buf', -1)]
+    if buf > 0 && bufexists(buf)
+      call setbufvar(buf, 'git_changes_blame', {})
+    endif
+  endfor
 endfunction
 
-function! s:blame_close() abort
-  let info = get(b:, 'git_changes_blame', {})
-  if empty(info)
+function! s:blame_close_info(info) abort
+  if empty(a:info)
     return
   endif
-  call s:blame_cleanup()
+  call s:blame_cleanup(a:info)
 
-  let win = get(info, 'win', 0)
+  let win = get(a:info, 'win', 0)
   if s:win_exists(win)
     if win == win_getid()
       close
@@ -6554,11 +6589,56 @@ function! s:blame_close() abort
     endif
   endif
 
-  let buf = get(info, 'buf', -1)
+  let buf = get(a:info, 'buf', -1)
   if bufexists(buf)
     execute 'silent! bwipeout! ' . buf
   endif
 endfunction
+
+function! s:blame_close() abort
+  let info = get(b:, 'git_changes_blame', {})
+  if empty(info)
+    return
+  endif
+  call s:blame_close_info(info)
+endfunction
+
+" Match fugitive's behavior: scrollbind (not cursorbind) keeps the windows
+" aligned, while the cursor line follows when focus moves between them.
+let s:blame_cursor_sync = []
+
+function! s:blame_record_cursor() abort
+  let info = get(b:, 'git_changes_blame', {})
+  if empty(info)
+    return
+  endif
+  let win = win_getid()
+  if win == get(info, 'file_win', 0)
+    let s:blame_cursor_sync = [get(info, 'win', 0), line('.')]
+  elseif win == get(info, 'win', 0)
+    let s:blame_cursor_sync = [get(info, 'file_win', 0), line('.')]
+  endif
+endfunction
+
+function! s:blame_apply_cursor() abort
+  if empty(s:blame_cursor_sync)
+    return
+  endif
+  let [win, lnum] = s:blame_cursor_sync
+  let s:blame_cursor_sync = []
+  if win_getid() != win || !s:win_exists(win)
+    return
+  endif
+  let pos = getpos('.')
+  let pos[1] = lnum
+  call setpos('.', pos)
+endfunction
+
+augroup git_changes_blame_sync
+  autocmd!
+  autocmd WinLeave * call s:blame_record_cursor()
+  autocmd WinEnter * call s:blame_apply_cursor()
+augroup END
 
 function! git_changes#blame() abort
   let root = s:repo_root()
@@ -6588,33 +6668,34 @@ function! git_changes#blame() abort
 
   let file_win = win_getid()
   let file_buf = bufnr('%')
-  let cur_line = line('.')
-  let view = winsaveview()
-  let modified = &modified
   let file_wrap = &wrap
+  let file_scrollbind = &l:scrollbind
+  let file_cursorbind = &l:cursorbind
+  let file_foldenable = &l:foldenable
+  let modified = &modified
+  let file_line_count = line('$')
 
-  let blame_lines = s:blame_lines(root, path, modified)
-  if v:shell_error
-    return
+  let contents = ''
+  if modified
+    let contents = tempname()
+    call writefile(getline(1, '$'), contents)
   endif
 
-  " Keep the pane aligned even for empty files.
-  let target = line('$')
-  while len(blame_lines) < target
-    call add(blame_lines, '')
-  endwhile
-  if len(blame_lines) > target
-    call remove(blame_lines, target, -1)
-  endif
+  " Match fugitive: use scrollbind only, and disable folds so both windows
+  " have the same visible lines.
+  setlocal scrollbind nowrap nofoldenable nocursorbind
+  let top = line('w0')
+  let cur_line = line('.')
+  let s:blame_cursor_sync = []
 
   leftabove vertical split
   let blame_win = win_getid()
   let blame_buf = s:new_scratch(
         \ printf('[GitChangesBlame %d] %s', file_buf, path), '')
-  call s:set_lines(blame_buf, blame_lines)
+  call s:set_lines(blame_buf, repeat([''], max([1, file_line_count])))
 
-  setlocal scrollbind cursorbind
-  setlocal nonumber norelativenumber nolist nowrap
+  setlocal scrollbind nowrap nofoldenable nocursorbind
+  setlocal nonumber norelativenumber nolist
   setlocal signcolumn=no foldcolumn=0 nospell nomodeline
   setlocal nomodifiable
   let configured = get(g:, 'git_changes_blame_width', 40)
@@ -6622,8 +6703,15 @@ function! git_changes#blame() abort
     let configured = 40
   endif
   execute 'vertical resize ' . max([12, configured])
+  setlocal winfixwidth
   execute 'nnoremap <buffer> <silent> q '
         \ . s:cmd_rhs(':<C-u>call ' . s:sid . 'blame_close()<CR>')
+
+  " Align the blame pane with the file window before loading the text.
+  execute top
+  normal! zt
+  execute cur_line
+  silent! syncbind
 
   let info = {
         \ 'win': blame_win,
@@ -6631,6 +6719,11 @@ function! git_changes#blame() abort
         \ 'file_win': file_win,
         \ 'file_buf': file_buf,
         \ 'file_wrap': file_wrap,
+        \ 'file_scrollbind': file_scrollbind,
+        \ 'file_cursorbind': file_cursorbind,
+        \ 'file_foldenable': file_foldenable,
+        \ 'contents': contents,
+        \ 'state': {},
         \ 'root': root,
         \ 'path': path,
         \ }
@@ -6643,10 +6736,7 @@ function! git_changes#blame() abort
           \ . s:sid . 'blame_cleanup()'
   augroup END
 
-  call win_execute(file_win, 'setlocal scrollbind cursorbind nowrap')
-  call s:set_cursor(blame_win, cur_line)
-  call win_gotoid(file_win)
-  call winrestview(view)
-  call win_gotoid(blame_win)
+  redraw
+  call s:start_blame_job(info, contents)
 endfunction
 
