@@ -123,8 +123,9 @@ set statusline+=%{GitChangesBlameLine()}
 执行 blame，完成后刷新状态栏；修改后的第一次调用可能会短暂为空。需要同步取值时
 使用 `GitChangesBlameLineSync()`（或 `git_changes#blame_line()`）。
 
-状态栏最多每 `g:git_changes_statusline_delay` 毫秒刷新一次（默认 500），并且只在
-normal 模式更新；insert / visual 模式显示上一次的值。设为 `0` 表示立即更新。
+状态栏使用防抖：光标或文件变化后，只有稳定 `g:git_changes_statusline_delay`
+毫秒（默认 500）才更新；快速按 `j`/`k` 时保持上一次的值。只在 normal 模式更新，
+insert / visual 模式显示上一次的值。设为 `0` 表示立即更新。
 
 ### Blame
 
@@ -232,7 +233,7 @@ let g:git_changes_width = 40
 " GitChangesBlameLine() 的格式（%h %a %e %d %s）
 let g:git_changes_blame_line_format = '%a %d'
 
-" 状态栏刷新延迟毫秒数（0 = 立即更新）
+" 状态栏防抖延迟毫秒数（0 = 立即更新）
 let g:git_changes_statusline_delay = 500
 
 " blame 窗口宽度

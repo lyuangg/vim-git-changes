@@ -4332,7 +4332,7 @@ endfunction
 
 let s:blame_line_cache = {}
 let s:blame_line_jobs = {}
-let s:blame_line_display = {}
+let s:blame_debounce = {}
 
 function! s:statusline_clear() abort
   let s:gitdir_cache = {}
@@ -4343,7 +4343,12 @@ function! s:statusline_clear() abort
     let s:statusline_timer = -1
   endif
   let s:blame_line_cache = {}
-  let s:blame_line_display = {}
+  for st in values(s:blame_debounce)
+    if st.timer != -1
+      call timer_stop(st.timer)
+    endif
+  endfor
+  let s:blame_debounce = {}
   for job in values(s:blame_line_jobs)
     call s:job_stop(job.state, 'blame_line')
     if !empty(job.ctx.contents)
@@ -4549,13 +4554,11 @@ function! s:on_blame_line_job(ctx, result) abort
   if !empty(a:ctx.contents)
     call delete(a:ctx.contents)
   endif
-  if empty(a:result.out)
-    return
-  endif
-
+  let entries = empty(a:result.out)
+        \ ? [] : s:parse_blame_entries(a:result.out)
   let s:blame_line_cache[key] = {
         \ 'time': localtime(),
-        \ 'entries': s:parse_blame_entries(a:result.out),
+        \ 'entries': entries,
         \ }
   if len(s:blame_line_cache) > 100
     call filter(s:blame_line_cache, 'localtime() - v:val.time < 30')
@@ -4607,25 +4610,52 @@ function! git_changes#blame_line_info_async() abort
   return cached.entries[lnum - 1]
 endfunction
 
+function! s:blame_debounce_fire(buf) abort
+  let st = get(s:blame_debounce, a:buf, {})
+  if empty(st)
+    return
+  endif
+  let st.timer = -1
+  let st.ready = st.want
+  if s:statusline_mode_ok()
+    silent! redrawstatus
+  endif
+endfunction
+
 function! git_changes#blame_line_async() abort
   let buf = bufnr('%')
   let key = buf . ':' . getbufvar(buf, 'changedtick', 0)
-        \ . ':' . expand('%:p')
+        \ . ':' . expand('%:p') . ':' . line('.')
   let delay = s:statusline_delay()
-  let shown = get(s:blame_line_display, buf, {})
-  if delay > 0 && !empty(shown) && get(shown, 'key', '') ==# key
-        \ && reltimefloat(reltime(shown.time)) * 1000 < delay
-    call s:schedule_statusline_redraw()
-    return shown.text
+  let st = get(s:blame_debounce, buf, {})
+  if empty(st)
+    let st = {'want': '', 'ready': '', 'shown': {}, 'timer': -1}
+    let s:blame_debounce[buf] = st
+  endif
+
+  if !empty(st.shown) && get(st.shown, 'key', '') ==# key
+    return st.shown.text
+  endif
+
+  " Debounce: wait until the cursor stops moving before updating.
+  if delay > 0 && st.ready !=# key
+    if st.timer != -1
+      call timer_stop(st.timer)
+    endif
+    let st.want = key
+    let st.timer = timer_start(delay, {-> s:blame_debounce_fire(buf)})
+    return empty(st.shown) ? '' : st.shown.text
   endif
 
   let info = git_changes#blame_line_info_async()
   let text = empty(info) ? '' : s:format_blame_line(info)
-  let s:blame_line_display[buf] = {
-        \ 'key': key,
-        \ 'time': reltime(),
-        \ 'text': text,
-        \ }
+  if !empty(info) || has_key(s:blame_line_cache, key)
+    let st.shown = {'key': key, 'text': text}
+    let st.ready = ''
+  else
+    " The background job is still running; poll again on the next redraw.
+    let st.ready = key
+  endif
   return text
 endfunction
 
