@@ -4230,8 +4230,147 @@ function! git_changes#statusline() abort
   return text
 endfunction
 
+let s:blame_line_cache = {}
+
 function! s:statusline_clear() abort
   let s:statusline_cache = {}
+  let s:blame_line_cache = {}
+endfunction
+
+function! s:parse_blame_entries(out) abort
+  let entries = []
+  let meta = {}
+  let i = 0
+  let total = len(a:out)
+
+  while i < total
+    let line = a:out[i]
+    if line !~# '^[0-9a-f]\{40\} '
+      let i += 1
+      continue
+    endif
+
+    let sha = strpart(line, 0, 40)
+    let author = ''
+    let email = ''
+    let date = ''
+    let summary = ''
+    let i += 1
+    while i < total && a:out[i][0] !=# "\t"
+      let field = a:out[i]
+      if field =~# '^author '
+        let author = strpart(field, 7)
+      elseif field =~# '^author-mail '
+        let email = substitute(strpart(field, 12), '^<\(.*\)>$', '\1', '')
+      elseif field =~# '^author-time '
+        let date = strftime('%Y-%m-%d', str2nr(strpart(field, 12)))
+      elseif field =~# '^summary '
+        let summary = strpart(field, 8)
+      endif
+      let i += 1
+    endwhile
+
+    if sha =~# '^0\+$'
+      let author = 'Uncommitted'
+      let email = ''
+      let summary = ''
+    endif
+
+    if !empty(author)
+      let meta[sha] = [author, email, date, summary]
+    elseif has_key(meta, sha)
+      let [author, email, date, summary] = meta[sha]
+    endif
+
+    if i < total && a:out[i][0] ==# "\t"
+      let i += 1
+    endif
+
+    call add(entries, {
+          \ 'sha': sha =~# '^0\+$' ? '' : strpart(sha, 0, 8),
+          \ 'author': author,
+          \ 'email': email,
+          \ 'date': date,
+          \ 'summary': summary,
+          \ })
+  endwhile
+  return entries
+endfunction
+
+function! s:blame_line_entries(root, path) abort
+  let buf = bufnr('%')
+  let tick = getbufvar(buf, 'changedtick', 0)
+  let key = buf . ':' . tick
+  let now = localtime()
+  let cached = get(s:blame_line_cache, key, {})
+  if !empty(cached) && now - cached.time < 5
+    return cached.entries
+  endif
+
+  let contents = ''
+  if &modified
+    let contents = tempname()
+    call writefile(getline(1, '$'), contents)
+  endif
+
+  let entries = []
+  try
+    let cmd = 'git --no-pager -c core.quotePath=false -c color.ui=false -C '
+          \ . shellescape(a:root) . ' blame --line-porcelain'
+    if !empty(contents)
+      let cmd .= ' --contents ' . shellescape(contents)
+    endif
+    let cmd .= ' -- ' . shellescape(a:path)
+    let out = systemlist(cmd)
+    if !v:shell_error
+      let entries = s:parse_blame_entries(out)
+    endif
+  finally
+    if !empty(contents)
+      call delete(contents)
+    endif
+  endtry
+
+  let s:blame_line_cache[key] = {'time': now, 'entries': entries}
+  if len(s:blame_line_cache) > 100
+    call filter(s:blame_line_cache, 'now - v:val.time < 30')
+  endif
+  return entries
+endfunction
+
+" Blame data for the current line: {sha, author, email, date, summary}.
+function! git_changes#blame_line_info() abort
+  let root = s:repo_root()
+  if empty(root)
+    return {}
+  endif
+  let path = s:current_repo_path(root)
+  if empty(path) || !filereadable(root . '/' . path)
+    return {}
+  endif
+
+  let entries = s:blame_line_entries(root, path)
+  let lnum = line('.')
+  if lnum < 1 || lnum > len(entries)
+    return {}
+  endif
+  return entries[lnum - 1]
+endfunction
+
+" Formatted blame for the current line. g:git_changes_blame_line_format
+" supports %h (short hash), %a (author), %e (email), %d (date), %s (summary).
+function! git_changes#blame_line() abort
+  let info = git_changes#blame_line_info()
+  if empty(info)
+    return ''
+  endif
+
+  let text = get(g:, 'git_changes_blame_line_format', '%a %d')
+  for [key, value] in items({'h': info.sha, 'a': info.author,
+        \ 'e': info.email, 'd': info.date, 's': info.summary})
+    let text = substitute(text, '%' . key, escape(value, '\&~'), 'g')
+  endfor
+  return trim(text)
 endfunction
 
 " Resolve an optional command argument to a path relative to the repo root.

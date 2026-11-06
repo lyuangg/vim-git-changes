@@ -7,6 +7,14 @@ function! GitChangesStatusline() abort
   return git_changes#statusline()
 endfunction
 
+function! GitChangesBlameLine() abort
+  return git_changes#blame_line()
+endfunction
+
+function! GitChangesBlameLineInfo() abort
+  return git_changes#blame_line_info()
+endfunction
+
 command! -bar -nargs=* -complete=customlist,git_changes#complete_refs GitChanges call git_changes#open(<f-args>)
 command! -bar GitChangesQuit   call git_changes#quit()
 command! -bar GitChangesDiffQuit call git_changes#diff_quit()

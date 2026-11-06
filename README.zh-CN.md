@@ -107,6 +107,17 @@ set statusline+=%{GitChangesStatusline()}
 执行 git；也可以直接使用 `git_changes#statusline()`。如果插件是懒加载的，需要保证
 启动时已加载，状态栏才能立即生效。
 
+当前行 blame：
+
+```vim
+set statusline+=%{GitChangesBlameLine()}
+```
+
+默认格式是 `作者 日期`，可用 `g:git_changes_blame_line_format` 修改
+（`%h` 短 hash、`%a` 作者、`%e` 邮箱、`%d` 日期、`%s` 提交信息）。
+`git_changes#blame_line_info()` 返回包含 `sha`、`author`、`email`、`date`、
+`summary` 的字典。结果按 buffer 版本缓存几秒。
+
 ### Blame
 
 ```vim
@@ -209,6 +220,9 @@ let g:git_changes_fold = 1
 
 " 左侧栏宽度
 let g:git_changes_width = 40
+
+" GitChangesBlameLine() 的格式（%h %a %e %d %s）
+let g:git_changes_blame_line_format = '%a %d'
 
 " blame 窗口宽度
 let g:git_changes_blame_width = 40

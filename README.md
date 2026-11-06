@@ -111,6 +111,17 @@ cached for a couple of seconds so redraws do not run git every time. The same
 value is available from `git_changes#statusline()`. With lazy loading, make sure
 the plugin is loaded at startup if the statusline should work immediately.
 
+For the blame of the current line:
+
+```vim
+set statusline+=%{GitChangesBlameLine()}
+```
+
+The default format is `author date`; set `g:git_changes_blame_line_format` to
+change it (`%h` short hash, `%a` author, `%e` email, `%d` date, `%s` summary).
+`git_changes#blame_line_info()` returns a dict with `sha`, `author`, `email`,
+`date`, and `summary`. Results are cached per buffer revision for a few seconds.
+
 ### Blame
 
 ```vim
@@ -227,6 +238,9 @@ let g:git_changes_fold = 1
 
 " Left pane width
 let g:git_changes_width = 40
+
+" Format for GitChangesBlameLine() (%h %a %e %d %s)
+let g:git_changes_blame_line_format = '%a %d'
 
 " Blame pane width
 let g:git_changes_blame_width = 40
