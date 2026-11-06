@@ -522,7 +522,7 @@ function! s:setup_list_window() abort
   setlocal cursorline
   setlocal scrolloff=2
   setlocal sidescrolloff=0
-  setlocal winminwidth=20
+  silent! setlocal winminwidth=20
 endfunction
 
 function! s:fold_level() abort
@@ -541,7 +541,7 @@ function! s:setup_diff_window() abort
   setlocal foldenable
   setlocal foldmethod=diff
   execute 'setlocal foldlevel=' . s:fold_level()
-  setlocal winminwidth=20
+  silent! setlocal winminwidth=20
 endfunction
 
 
@@ -558,6 +558,7 @@ function! s:default_keymaps() abort
         \ 'file_discard_diff': 'D',
         \ 'staged_view': 'dS',
         \ 'open_file': 'o',
+        \ 'diff_file': 'gd',
         \ 'scroll_half_down': '<C-d>',
         \ 'scroll_half_up': '<C-u>',
         \ 'copy_file': 'yy',
@@ -680,6 +681,7 @@ function! s:init_list_buffer(state, kind) abort
     call s:map_keys('toggle_stage', ':<C-u>call ' . s:sid . 'stage_current("toggle")<CR>')
     call s:map_keys('file_discard', ':<C-u>call ' . s:sid . 'discard_current()<CR>')
     call s:map_keys('open_file', ':<C-u>call ' . s:sid . 'open_file()<CR>')
+    call s:map_keys('diff_file', ':<C-u>call ' . s:sid . 'open_file_diff_for_current()<CR>')
     call s:map_keys('scroll_half_down', ':<C-u>call ' . s:sid . 'scroll_diff_half(1)<CR>')
     call s:map_keys('scroll_half_up', ':<C-u>call ' . s:sid . 'scroll_diff_half(-1)<CR>')
     call s:map_keys('copy_file', ':<C-u>call ' . s:sid . 'copy_file_path()<CR>')
@@ -706,6 +708,7 @@ function! s:init_diff_buffer(state, side) abort
   let b:gc_side = a:side
   call s:setup_diff_window()
   call s:map_keys('open_file', ':<C-u>call ' . s:sid . 'open_file()<CR>')
+  call s:map_keys('diff_file', ':<C-u>call ' . s:sid . 'open_file_diff_for_current()<CR>')
   call s:map_keys('stage', ':<C-u>call ' . s:sid . 'stage_current("stage")<CR>')
   call s:map_keys('unstage', ':<C-u>call ' . s:sid . 'stage_current("unstage")<CR>')
   call s:map_keys('stage_all', ':<C-u>call ' . s:sid . 'stage_all()<CR>')
@@ -774,20 +777,24 @@ endfunction
 
 " Pick the diff window to scroll: the side with more content.
 function! s:diff_scroll_window(state) abort
-  let old_ok = a:state.old_win > 0 && win_id2win(a:state.old_win) > 0
-  let new_ok = a:state.new_win > 0 && win_id2win(a:state.new_win) > 0
-  if !old_ok && !new_ok
-    return 0
+  let pairs = [[a:state.old_win, a:state.old_buf],
+        \ [a:state.new_win, a:state.new_buf]]
+  let work_win = get(a:state, 'work_win', 0)
+  if work_win > 0
+    call add(pairs, [work_win, get(a:state, 'work_buf', -1)])
   endif
 
-  let winid = old_ok ? a:state.old_win : a:state.new_win
-  if old_ok && new_ok
-    let old_lines = s:buf_linecount(a:state.old_buf)
-    let new_lines = s:buf_linecount(a:state.new_buf)
-    if new_lines > old_lines
-      let winid = a:state.new_win
+  let winid = 0
+  let max = -1
+  for [candidate, buf] in pairs
+    if s:win_exists(candidate) && buf > 0 && bufexists(buf)
+      let lines = s:buf_linecount(buf)
+      if lines > max
+        let max = lines
+        let winid = candidate
+      endif
     endif
-  endif
+  endfor
   return winid
 endfunction
 
@@ -981,7 +988,7 @@ function! s:cycle_pane(delta) abort
   endif
 
   let windows = [state.files_win, state.commits_win, state.branches_win,
-        \ state.old_win, state.new_win]
+        \ state.old_win, state.new_win, get(state, 'work_win', 0)]
   let current = win_getid()
   let target = 0
   for i in range(len(windows))
@@ -1009,7 +1016,7 @@ function! s:scroll_diff_horizontal(delta) abort
   endif
 
   let key = a:delta > 0 ? 'zl' : 'zh'
-  for winid in [state.old_win, state.new_win]
+  for winid in s:diff_windows(state)
     if s:win_exists(winid)
       call win_execute(winid, 'silent! normal! ' . key)
     endif
@@ -2677,7 +2684,7 @@ function! s:files_header_lines(state, entry) abort
     endif
     if a:state.show_help
       call add(lines, '# s:stage u:unstage -:toggle S/U:all t:tree')
-      call add(lines, '# r:refresh d:discard o:open ?:hide')
+      call add(lines, '# r:refresh d:discard o:open gd:diff ?:hide')
       call add(lines, '# Esc:worktree yy:path cc:commit cb:new')
       call add(lines, '# C:edit p:pull P:push')
       call add(lines, '# J/K:scroll C-d/u:half 1/2/3 Tab/S-Tab')
@@ -3180,11 +3187,94 @@ function! s:apply_files(state, entry, on_done, result) abort
 endfunction
 
 function! s:side_win(state, side) abort
+  if a:side ==# 'work'
+    return get(a:state, 'work_win', 0)
+  endif
   return a:side ==# 'old' ? a:state.old_win : a:state.new_win
 endfunction
 
 function! s:side_buf(state, side) abort
+  if a:side ==# 'work'
+    return get(a:state, 'work_buf', -1)
+  endif
   return a:side ==# 'old' ? a:state.old_buf : a:state.new_buf
+endfunction
+
+" Unmerged statuses as reported by `git status --porcelain`.
+function! s:is_conflict(file) abort
+  return get(a:file, 'status_text', '') =~
+        \ '^\(DD\|AU\|UD\|UA\|DU\|AA\|UU\)$'
+endfunction
+
+function! s:ensure_work_win(state) abort
+  if s:win_exists(get(a:state, 'work_win', 0))
+    return 1
+  endif
+  if !s:win_exists(a:state.new_win)
+    return 0
+  endif
+
+  let curwin = win_getid()
+  let old_winwidth = getwinvar(a:state.new_win, '&winwidth')
+
+  " Make room for a third pane on narrow terminals.
+  call win_execute(a:state.files_win,
+        \ 'silent! vertical resize ' . max([10, &columns / 6]))
+  call win_execute(a:state.new_win,
+        \ 'setlocal winminwidth=1')
+  call win_execute(a:state.new_win,
+        \ 'setlocal winwidth=1')
+  try
+    call win_gotoid(a:state.new_win)
+    rightbelow vsplit
+  catch
+    call s:apply_layout(a:state)
+    call win_gotoid(curwin)
+    return 0
+  finally
+    if s:win_exists(a:state.new_win)
+      call win_execute(a:state.new_win,
+            \ 'setlocal winwidth=' . old_winwidth)
+    endif
+  endtry
+  let a:state.work_win = win_getid()
+  let a:state.work_buf = s:new_scratch(
+        \ printf('[GitChanges %d] Work', a:state.id), '')
+  call s:init_diff_buffer(a:state, 'work')
+  call win_gotoid(curwin)
+  return 1
+endfunction
+
+function! s:close_work_win(state) abort
+  let win = get(a:state, 'work_win', 0)
+  let had_work = s:win_exists(win)
+  if had_work
+    if win == win_getid()
+      close
+    else
+      call win_execute(win, 'silent! close')
+    endif
+  endif
+  let buf = get(a:state, 'work_buf', -1)
+  if bufexists(buf)
+    execute 'silent! bwipeout! ' . buf
+  endif
+  let a:state.work_win = 0
+  let a:state.work_buf = -1
+  if had_work
+    call s:apply_layout(a:state)
+  endif
+endfunction
+
+function! s:resize_three_way(state) abort
+  if !s:win_exists(get(a:state, 'work_win', 0))
+    return
+  endif
+  let total = winwidth(a:state.old_win) + winwidth(a:state.new_win)
+        \ + winwidth(a:state.work_win) + 2
+  let each = max([16, total / 3])
+  call win_execute(a:state.old_win, 'silent! vertical resize ' . each)
+  call win_execute(a:state.new_win, 'silent! vertical resize ' . each)
 endfunction
 
 function! s:set_side_filetype(state, side, path) abort
@@ -3205,6 +3295,12 @@ function! s:set_side_filetype(state, side, path) abort
 endfunction
 
 function! s:load_side_buffer(state, side, path, lines, detect_filetype, label) abort
+  " In the editable file diff the new side is the real file buffer: keep its
+  " contents and name untouched.
+  if a:side ==# 'new' && get(a:state, 'editable', 0)
+    return 0
+  endif
+
   let buf = s:side_buf(a:state, a:side)
   let winid = s:side_win(a:state, a:side)
   if buf <= 0 || !bufexists(buf) || !s:win_exists(winid)
@@ -3248,8 +3344,17 @@ function! s:side_needs_update(state, side, path, lines) abort
         \ || getbufvar(buf, 'git_changes_side_path', '') !=# a:path
 endfunction
 
+function! s:diff_windows(state) abort
+  let wins = [a:state.old_win, a:state.new_win]
+  let work = get(a:state, 'work_win', 0)
+  if work > 0
+    call add(wins, work)
+  endif
+  return wins
+endfunction
+
 function! s:diff_off(state) abort
-  for winid in [a:state.old_win, a:state.new_win]
+  for winid in s:diff_windows(a:state)
     if s:win_exists(winid)
       call win_execute(winid, 'silent! diffoff')
     endif
@@ -3257,12 +3362,12 @@ function! s:diff_off(state) abort
 endfunction
 
 function! s:diff_on(state) abort
-  for winid in [a:state.old_win, a:state.new_win]
+  for winid in s:diff_windows(a:state)
     if s:win_exists(winid)
       call win_execute(winid, 'silent! diffthis')
     endif
   endfor
-  for winid in [a:state.old_win, a:state.new_win]
+  for winid in s:diff_windows(a:state)
     if s:win_exists(winid)
       call win_execute(winid,
             \ 'setlocal foldenable foldmethod=diff foldlevel=' . s:fold_level())
@@ -3282,13 +3387,17 @@ function! s:sync_diff(state) abort
     call win_execute(winid, 'silent! diffupdate')
   endif
 
-  call s:set_cursor(a:state.old_win, 1)
-  call s:set_cursor(a:state.new_win, 1)
-  call s:scroll_top(a:state.old_win)
-  call s:scroll_top(a:state.new_win)
+  for winid in s:diff_windows(a:state)
+    if get(a:state, 'editable', 0) && winid == a:state.new_win
+      continue
+    endif
+    call s:set_cursor(winid, 1)
+    call s:scroll_top(winid)
+  endfor
 endfunction
 
 function! s:show_side_message(state, lines) abort
+  call s:close_work_win(a:state)
   let a:state.shown_file = {}
   let need_diff = s:side_needs_update(a:state, 'old', '', a:lines)
         \ || s:side_needs_update(a:state, 'new', '', a:lines)
@@ -3402,6 +3511,12 @@ function! s:show_diff(state, file, ...) abort
         \ 'token': token,
         \ }
 
+  if entry.kind ==# 'worktree' && !cached && s:is_conflict(a:file)
+    call s:show_conflict_diff(a:state, a:file, entry, ctx)
+    return
+  endif
+  call s:close_work_win(a:state)
+
   if entry.kind ==# 'worktree'
     if cached
       if get(a:file, 'status_text', '') ==# '??'
@@ -3509,8 +3624,83 @@ function! s:on_diff_part(state, ctx, side, result) abort
   endif
 endfunction
 
+function! s:show_conflict_diff(state, file, entry, ctx) abort
+  let path = a:ctx.new_path
+  let a:ctx.three_way = 1
+  let a:ctx.old_path = path
+  let a:ctx.new_path = path
+  let a:ctx.work_path = path
+  let a:ctx.old_label = 'OURS ' . path
+  let a:ctx.new_label = 'WORKTREE ' . path
+  let a:ctx.work_label = 'THEIRS ' . path
+
+  if s:worktree_file_is_binary(a:state.root, path)
+    call s:close_work_win(a:state)
+    call s:show_side_message(a:state,
+          \ ['(binary file - no side-by-side diff)'])
+    return
+  endif
+
+  let a:ctx.new = s:read_worktree(a:state.root, path)
+  let a:ctx.pending = 2
+  call s:git_job(a:state, 'diff-old', 'diff_req', a:ctx.token,
+        \ ['show', ':2:' . path],
+        \ function('s:on_diff_part', [a:state, a:ctx, 'old']))
+  call s:git_job(a:state, 'diff-new', 'diff_req', a:ctx.token,
+        \ ['show', ':3:' . path],
+        \ function('s:on_diff_part', [a:state, a:ctx, 'work']))
+endfunction
+
+function! s:apply_three_way(state, ctx) abort
+  if s:diff_is_stale(a:state, a:ctx)
+    return
+  endif
+
+  let old_lines = a:ctx.old
+  let new_lines = a:ctx.new
+  let work_lines = a:ctx.work
+  let need_diff = s:side_needs_update(a:state, 'old', a:ctx.old_path, old_lines)
+        \ || s:side_needs_update(a:state, 'new', a:ctx.new_path, new_lines)
+        \ || s:side_needs_update(a:state, 'work', a:ctx.work_path, work_lines)
+
+  let old_lazy = &lazyredraw
+  set lazyredraw
+  try
+    if need_diff
+      call s:diff_off(a:state)
+    endif
+
+    let curwin = win_getid()
+    if !s:ensure_work_win(a:state)
+      return
+    endif
+
+    call s:load_side_buffer(a:state, 'old', a:ctx.old_path, old_lines, 1,
+          \ a:ctx.old_label)
+    call s:load_side_buffer(a:state, 'new', a:ctx.new_path, new_lines, 1,
+          \ a:ctx.new_label)
+    call s:load_side_buffer(a:state, 'work', a:ctx.work_path, work_lines, 1,
+          \ a:ctx.work_label)
+
+    if need_diff
+      call s:diff_on(a:state)
+      call s:sync_diff(a:state)
+    endif
+    call s:resize_three_way(a:state)
+    let a:state.shown_file = a:ctx.file
+    call win_gotoid(curwin)
+  finally
+    let &lazyredraw = old_lazy
+  endtry
+endfunction
+
 function! s:apply_diff(state, ctx) abort
   if s:diff_is_stale(a:state, a:ctx)
+    return
+  endif
+
+  if get(a:ctx, 'three_way', 0)
+    call s:apply_three_way(a:state, a:ctx)
     return
   endif
 
@@ -3518,6 +3708,9 @@ function! s:apply_diff(state, ctx) abort
   let new_lines = a:ctx.new
   let need_diff = s:side_needs_update(a:state, 'old', a:ctx.old_path, old_lines)
         \ || s:side_needs_update(a:state, 'new', a:ctx.new_path, new_lines)
+  if get(a:state, 'editable', 0)
+    let need_diff = 1
+  endif
 
   let old_lazy = &lazyredraw
   set lazyredraw
@@ -3769,11 +3962,13 @@ function! s:open_tab(root, parsed, tabnr) abort
         \ 'commits_buf': -1,
         \ 'old_buf': -1,
         \ 'new_buf': -1,
+        \ 'work_buf': -1,
         \ 'branches_buf': -1,
         \ 'files_win': 0,
         \ 'commits_win': 0,
         \ 'old_win': 0,
         \ 'new_win': 0,
+        \ 'work_win': 0,
         \ 'branches_win': 0,
         \ 'file_timer': -1,
         \ 'commit_timer': -1,
@@ -3890,10 +4085,20 @@ function! s:apply_layout(state) abort
 
   call win_execute(a:state.files_win,
         \ 'silent! vertical resize ' . width)
-  let side_total = winwidth(a:state.old_win) + winwidth(a:state.new_win) + 1
-  let side_width = max([20, side_total / 2])
-  call win_execute(a:state.old_win,
-        \ 'silent! vertical resize ' . side_width)
+  if s:win_exists(get(a:state, 'work_win', 0))
+    let side_total = winwidth(a:state.old_win) + winwidth(a:state.new_win)
+          \ + winwidth(a:state.work_win) + 2
+    let side_width = max([16, side_total / 3])
+    call win_execute(a:state.old_win,
+          \ 'silent! vertical resize ' . side_width)
+    call win_execute(a:state.new_win,
+          \ 'silent! vertical resize ' . side_width)
+  else
+    let side_total = winwidth(a:state.old_win) + winwidth(a:state.new_win) + 1
+    let side_width = max([20, side_total / 2])
+    call win_execute(a:state.old_win,
+          \ 'silent! vertical resize ' . side_width)
+  endif
   call win_execute(a:state.branches_win, 'silent! resize ' . branch_height)
   call win_execute(a:state.files_win, 'silent! resize ' . files_height)
 endfunction
@@ -3964,7 +4169,7 @@ function! s:quit_state(state) abort
   endif
 
   for buf in [state.files_buf, state.commits_buf, state.old_buf,
-        \ state.new_buf, state.branches_buf]
+        \ state.new_buf, get(state, 'work_buf', -1), state.branches_buf]
     if bufexists(buf)
       execute 'silent! bwipeout! ' . buf
     endif
@@ -3980,6 +4185,19 @@ function! git_changes#quit() abort
     return
   endif
   call s:quit_state(state)
+endfunction
+
+" Close the current GitChangesDiff view (inline splits or its tab).
+function! git_changes#diff_quit() abort
+  let state = get(b:, 'git_changes_file_diff', {})
+  if empty(state)
+    let state = get(t:, 'git_changes_file_diff', {})
+  endif
+  if empty(state) || !s:file_diff_alive(state)
+    call s:err('no GitChangesDiff window found')
+    return
+  endif
+  call s:close_file_diff(state)
 endfunction
 
 " Resolve an optional command argument to a path relative to the repo root.
@@ -4280,6 +4498,17 @@ function! s:build_diff_labels(spec) abort
   let path = a:spec.path
   let refs = a:spec.refs
 
+  if get(a:spec, 'conflict', 0)
+    let a:spec.old_expr = ':2:' . path
+    let a:spec.old_label = 'OURS ' . path
+    let a:spec.new_expr = ''
+    let a:spec.new_label = 'WORKTREE ' . path
+    let a:spec.new_kind = 'worktree'
+    let a:spec.work_expr = ':3:' . path
+    let a:spec.work_label = 'THEIRS ' . path
+    return
+  endif
+
   if len(refs) == 2
     let a:spec.old_expr = refs[0] . ':' . path
     let a:spec.new_expr = refs[1] . ':' . path
@@ -4403,8 +4632,14 @@ function! s:parse_diff_args(root, current, tokens, defaults) abort
         \ 'cached': cached,
         \ 'ignore': ignore,
         \ }
+  let spec.conflict = !cached && empty(refs)
+        \ && s:path_is_conflict(a:root, path)
   call s:build_diff_labels(spec)
   return spec
+endfunction
+
+function! s:path_is_conflict(root, path) abort
+  return !empty(s:git(a:root, 'ls-files -u -- ' . shellescape(a:path)))
 endfunction
 
 function! s:diff_path_known(root, spec) abort
@@ -4453,7 +4688,7 @@ function! s:maybe_save_current(root, spec, current) abort
         \ "&Save\n&Skip\n&Cancel", 1)
   if choice == 2
     echomsg 'GitChangesDiff: comparing disk contents (unsaved changes skipped)'
-    return 1
+    return 2
   elseif choice != 1
     return 0
   endif
@@ -4485,9 +4720,12 @@ function! s:diff_open(raw, defaults) abort
     return
   endif
 
+  let save_state = 1
   if spec.new_kind ==# 'worktree'
-        \ && !s:maybe_save_current(root, spec, current)
-    return
+    let save_state = s:maybe_save_current(root, spec, current)
+    if save_state == 0
+      return
+    endif
   endif
 
   if !s:diff_path_known(root, spec)
@@ -4495,27 +4733,47 @@ function! s:diff_open(raw, defaults) abort
     return
   endif
 
+  let inline = save_state != 2 && spec.new_kind ==# 'worktree'
+        \ && !empty(current) && current ==# spec.path && &buftype ==# ''
+        \ && !s:worktree_file_is_binary(root, spec.path)
+
   " Reuse the existing diff tab for this repository instead of opening a new
   " one on every invocation.
   let tabnr = 0
   let existing = s:find_file_diff_state(root)
   if !empty(existing)
     let tabnr = s:close_file_diff(existing)
+    if tabnr < 0
+      return
+    endif
+    if inline
+      let tabnr = 0
+    endif
   endif
 
-  call s:open_sxs_diff(root, spec, tabnr)
+  call s:open_sxs_diff(root, spec, tabnr, save_state != 2, inline)
 endfunction
 
 function! s:open_sxs_diff(root, spec, ...) abort
   let tabnr = a:0 ? a:1 : 0
+  let editable = a:0 > 1 ? a:2 : 1
+  let inline = a:0 > 2 ? a:3 : 0
   let id = s:file_diff_next_id + 1
   let s:file_diff_next_id = id
 
-  tabnew
-  if tabnr > 0
-    execute 'silent! tabmove ' . (tabnr - 1)
+  let initial_buf = -1
+  let file_win = 0
+  let file_buf = -1
+  if inline
+    let file_win = win_getid()
+    let file_buf = bufnr('%')
+  else
+    tabnew
+    if tabnr > 0
+      execute 'silent! tabmove ' . (tabnr - 1)
+    endif
+    let initial_buf = bufnr('%')
   endif
-  let initial_buf = bufnr('%')
 
   let state = {
         \ 'id': id,
@@ -4524,24 +4782,67 @@ function! s:open_sxs_diff(root, spec, ...) abort
         \ 'tab': tabpagenr(),
         \ 'old_buf': -1,
         \ 'new_buf': -1,
+        \ 'work_buf': -1,
         \ 'old_win': 0,
         \ 'new_win': 0,
+        \ 'work_win': 0,
+        \ 'editable': 0,
+        \ 'inline': inline,
         \ 'diff_req': 0,
         \ 'shown_file': {},
         \ 'clean': 0,
         \ }
+  if inline
+    let state.saved_opts = {
+          \ 'wrap': &wrap,
+          \ 'number': &number,
+          \ 'relativenumber': &relativenumber,
+          \ 'foldmethod': &foldmethod,
+          \ 'foldenable': &foldenable,
+          \ 'cursorline': &cursorline,
+          \ }
+  endif
   let t:git_changes_file_diff = state
 
+  if inline
+    call win_gotoid(file_win)
+    leftabove vsplit
+  endif
   let state.old_win = win_getid()
   let state.old_buf = s:new_scratch(
         \ printf('[GitChangesDiff %d] %s', id, a:spec.old_label), '')
   call s:init_file_diff_buffer(state, 'old')
 
-  rightbelow vsplit
-  let state.new_win = win_getid()
-  let state.new_buf = s:new_scratch(
-        \ printf('[GitChangesDiff %d] %s', id, a:spec.new_label), '')
-  call s:init_file_diff_buffer(state, 'new')
+  if inline
+    let state.new_win = file_win
+    let state.new_buf = file_buf
+    let state.editable = editable && a:spec.new_kind ==# 'worktree'
+          \ && !s:worktree_file_is_binary(a:root, a:spec.path)
+    call win_gotoid(file_win)
+    call s:init_file_diff_buffer(state, 'new')
+  else
+    rightbelow vsplit
+    let state.new_win = win_getid()
+    if editable && a:spec.new_kind ==# 'worktree'
+          \ && !s:worktree_file_is_binary(a:root, a:spec.path)
+      execute 'edit ' . fnameescape(a:root . '/' . a:spec.path)
+      let state.new_buf = bufnr('%')
+      let state.editable = 1
+    else
+      let state.new_buf = s:new_scratch(
+            \ printf('[GitChangesDiff %d] %s', id, a:spec.new_label), '')
+    endif
+    call s:init_file_diff_buffer(state, 'new')
+  endif
+
+  if get(a:spec, 'conflict', 0)
+    call win_gotoid(state.new_win)
+    rightbelow vsplit
+    let state.work_win = win_getid()
+    let state.work_buf = s:new_scratch(
+          \ printf('[GitChangesDiff %d] %s', id, a:spec.work_label), '')
+    call s:init_file_diff_buffer(state, 'work')
+  endif
 
   if initial_buf > 0 && bufexists(initial_buf)
         \ && empty(bufname(initial_buf))
@@ -4553,18 +4854,29 @@ function! s:open_sxs_diff(root, spec, ...) abort
   " triggers a BufWipeout filter that drops states with no live buffers.
   call add(s:file_diff_instances, state)
 
-  let total = winwidth(state.old_win) + winwidth(state.new_win) + 1
-  call win_gotoid(state.old_win)
-  silent! execute 'vertical resize ' . max([20, total / 2])
+  if s:win_exists(state.work_win)
+    let total = winwidth(state.old_win) + winwidth(state.new_win)
+          \ + winwidth(state.work_win) + 2
+    let each = max([16, total / 3])
+    call win_execute(state.old_win, 'silent! vertical resize ' . each)
+    call win_execute(state.new_win, 'silent! vertical resize ' . each)
+  else
+    let total = winwidth(state.old_win) + winwidth(state.new_win) + 1
+    call win_execute(state.old_win,
+          \ 'silent! vertical resize ' . max([20, total / 2]))
+  endif
 
   call s:diff_on(state)
   call s:file_diff_activate(state)
   call s:start_sxs_fetch(state)
 
-  call s:set_cursor(state.old_win, 1)
-  call s:set_cursor(state.new_win, 1)
-  call s:scroll_top(state.old_win)
-  call s:scroll_top(state.new_win)
+  for winid in s:diff_windows(state)
+    if winid == state.new_win && state.editable
+      continue
+    endif
+    call s:set_cursor(winid, 1)
+    call s:scroll_top(winid)
+  endfor
   call win_gotoid(state.new_win)
 endfunction
 
@@ -4573,18 +4885,14 @@ function! s:init_file_diff_buffer(state, side) abort
   let b:gc_kind = 'filediff'
   let b:gc_side = a:side
   call s:setup_diff_window()
-  call s:map_keys('quit', ':<C-u>call ' . s:sid . 'close_file_diff_tab()<CR>')
-  call s:map_keys('refresh', ':<C-u>call ' . s:sid . 'refresh_file_diff()<CR>')
-  call s:map_keys('stage', ':<C-u>call ' . s:sid . 'stage_file_diff("stage")<CR>')
-  call s:map_keys('unstage', ':<C-u>call ' . s:sid . 'stage_file_diff("unstage")<CR>')
-  call s:map_keys('staged_view', ':<C-u>call ' . s:sid . 'toggle_staged_file_diff()<CR>')
-  call s:map_keys('file_discard_diff', ':<C-u>call ' . s:sid . 'discard_file_diff()<CR>')
-  call s:map_keys('commit', ':<C-u>call ' . s:sid . 'commit_file_diff()<CR>')
-  call s:map_keys('commit_editor', ':<C-u>call ' . s:sid . 'commit_file_diff_editor()<CR>')
-  call s:map_keys('open_file', ':<C-u>call ' . s:sid . 'open_file_diff()<CR>')
-  call s:map_open_main()
-  call s:map_keys('cycle_next', ':<C-u>call ' . s:sid . 'cycle_file_diff(1)<CR>')
-  call s:map_keys('cycle_prev', ':<C-u>call ' . s:sid . 'cycle_file_diff(-1)<CR>')
+
+  if a:side ==# 'new' && get(a:state, 'editable', 0)
+    augroup git_changes_file_diff_write
+      autocmd! * <buffer>
+      execute 'autocmd BufWritePost <buffer> call '
+            \ . s:sid . 'refresh_file_diff()'
+    augroup END
+  endif
 endfunction
 
 function! s:diffopt_with_ignore(diffopt, ignore) abort
@@ -4663,22 +4971,63 @@ function! s:file_diff_on_tab_leave() abort
 endfunction
 
 function! s:file_diff_on_tab_closed() abort
-  if empty(s:file_diff_active)
-    call filter(s:file_diff_instances, 's:file_diff_alive(v:val)')
-    return
-  endif
-  if !s:file_diff_tab_exists(get(s:file_diff_active, 'tab', 0))
+  if !empty(s:file_diff_active)
+        \ && !s:file_diff_tab_exists(get(s:file_diff_active, 'tab', 0))
     call s:file_diff_deactivate(s:file_diff_active)
   endif
+  for state in copy(s:file_diff_instances)
+    if !s:file_diff_alive(state) && get(state, 'editable', 0)
+      if bufexists(get(state, 'new_buf', -1))
+        call setbufvar(state.new_buf, 'git_changes_file_diff', {})
+        call setbufvar(state.new_buf, 'gc_kind', '')
+        call setbufvar(state.new_buf, 'gc_side', '')
+      endif
+    endif
+  endfor
   call filter(s:file_diff_instances, 's:file_diff_alive(v:val)')
+endfunction
+
+function! s:inline_cleanup(state) abort
+  let file_win = get(a:state, 'new_win', 0)
+  if s:win_exists(file_win)
+    let saved = get(a:state, 'saved_opts', {})
+    let cmd = 'setlocal noscrollbind nocursorbind'
+    if !empty(saved)
+      let cmd .= ' ' . (get(saved, 'wrap', 1) ? 'wrap' : 'nowrap')
+      let cmd .= ' ' . (get(saved, 'number', 0) ? 'number' : 'nonumber')
+      let cmd .= ' ' . (get(saved, 'relativenumber', 0)
+            \ ? 'relativenumber' : 'norelativenumber')
+      let cmd .= ' foldmethod=' . get(saved, 'foldmethod', 'manual')
+      let cmd .= ' ' . (get(saved, 'foldenable', 1)
+            \ ? 'foldenable' : 'nofoldenable')
+      let cmd .= ' ' . (get(saved, 'cursorline', 0)
+            \ ? 'cursorline' : 'nocursorline')
+    endif
+    call win_execute(file_win, cmd)
+    call win_execute(file_win, 'silent! diffoff')
+  endif
+
+  if bufexists(get(a:state, 'new_buf', -1))
+    call setbufvar(a:state.new_buf, 'git_changes_file_diff', {})
+    call setbufvar(a:state.new_buf, 'gc_kind', '')
+    call setbufvar(a:state.new_buf, 'gc_side', '')
+  endif
 endfunction
 
 function! s:file_diff_on_buf_wipeout(buf) abort
   if !empty(s:file_diff_active)
         \ && (a:buf == get(s:file_diff_active, 'old_buf', -1)
-        \     || a:buf == get(s:file_diff_active, 'new_buf', -1))
+        \     || a:buf == get(s:file_diff_active, 'new_buf', -1)
+        \     || a:buf == get(s:file_diff_active, 'work_buf', -1))
     call s:file_diff_deactivate(s:file_diff_active)
   endif
+  for state in copy(s:file_diff_instances)
+    if get(state, 'inline', 0)
+          \ && (a:buf == get(state, 'old_buf', -1)
+          \     || a:buf == get(state, 'work_buf', -1))
+      call s:inline_cleanup(state)
+    endif
+  endfor
   call filter(s:file_diff_instances, 's:file_diff_alive(v:val)')
 endfunction
 
@@ -4770,12 +5119,13 @@ function! s:start_sxs_fetch(state) abort
     call s:show_side_message(a:state, ['(binary file - no side-by-side diff)'])
     return
   endif
-  let a:state.clean = analysis.clean
+  let a:state.clean = get(spec, 'conflict', 0) ? 0 : analysis.clean
 
   let ctx = {
         \ 'token': token,
         \ 'old': [],
         \ 'new': [],
+        \ 'three_way': get(spec, 'conflict', 0),
         \ 'old_path': spec.path,
         \ 'new_path': spec.path,
         \ 'old_label': spec.old_label,
@@ -4784,13 +5134,23 @@ function! s:start_sxs_fetch(state) abort
         \ 'entry': {},
         \ 'pending': 0,
         \ }
+  if ctx.three_way
+    let ctx.work_path = spec.path
+    let ctx.work_label = spec.work_label
+  endif
   if spec.new_kind ==# 'worktree'
-    let ctx.new = s:read_worktree(a:state.root, spec.path)
+    if get(a:state, 'editable', 0)
+      let ctx.new = getbufline(a:state.new_buf, 1, '$')
+    else
+      let ctx.new = s:read_worktree(a:state.root, spec.path)
+    endif
   endif
 
   let old_job = !empty(spec.old_expr)
   let new_job = spec.new_kind !=# 'worktree'
+  let work_job = ctx.three_way && !empty(get(spec, 'work_expr', ''))
   let ctx.pending = (old_job ? 1 : 0) + (new_job ? 1 : 0)
+        \ + (work_job ? 1 : 0)
   if ctx.pending == 0
     call s:apply_sxs_content(a:state, ctx)
     return
@@ -4805,6 +5165,11 @@ function! s:start_sxs_fetch(state) abort
     call s:git_job(a:state, 'diff-new', 'diff_req', token,
           \ ['show', spec.new_expr],
           \ function('s:on_sxs_part', [a:state, ctx, 'new']))
+  endif
+  if work_job
+    call s:git_job(a:state, 'diff-new', 'diff_req', token,
+          \ ['show', spec.work_expr],
+          \ function('s:on_sxs_part', [a:state, ctx, 'work']))
   endif
 endfunction
 
@@ -4905,6 +5270,30 @@ function! s:open_file_diff() abort
   call s:show_file(path, line('.'))
 endfunction
 
+" Open the editable file diff for the selected file from a main diff pane.
+function! s:open_file_diff_for_current() abort
+  let state = s:cur_state()
+  if empty(state) || empty(state.commits) || state.commit_index < 0
+    return
+  endif
+  call s:flush_pending(state)
+
+  let index = s:current_file_index(state)
+  if index < 0 || index >= len(state.files)
+    call s:err('select a file first')
+    return
+  endif
+
+  let file = state.files[index]
+  let path = state.root . '/' . file.path
+  if !filereadable(path)
+    call s:err('file does not exist: ' . file.path)
+    return
+  endif
+
+  call git_changes#diff_open('-- ' . shellescape(path))
+endfunction
+
 function! s:commit_file_diff() abort
   let state = get(b:, 'git_changes_file_diff', {})
   if empty(state) || !s:file_diff_alive(state)
@@ -5003,6 +5392,9 @@ function! s:discard_file_diff() abort
   if !s:git_do(state.root, 'checkout -- ' . pathspec)
     return
   endif
+  if get(state, 'editable', 0) && s:win_exists(state.new_win)
+    call win_execute(state.new_win, 'silent! edit!')
+  endif
   echomsg 'Discarded unstaged changes: ' . path
   call s:refresh_file_diff()
 endfunction
@@ -5038,6 +5430,50 @@ function! s:find_file_diff_state(root) abort
 endfunction
 
 function! s:close_file_diff(state) abort
+  if get(a:state, 'inline', 0)
+    call s:file_diff_deactivate(a:state)
+    call s:job_stop(a:state, 'diff-old')
+    call s:job_stop(a:state, 'diff-new')
+
+    call s:inline_cleanup(a:state)
+
+    for winid in [get(a:state, 'work_win', 0), get(a:state, 'old_win', 0)]
+      if s:win_exists(winid)
+        if winid == win_getid()
+          close
+        else
+          call win_execute(winid, 'silent! close')
+        endif
+      endif
+    endfor
+    for buf in [get(a:state, 'work_buf', -1), get(a:state, 'old_buf', -1)]
+      if bufexists(buf)
+        execute 'silent! bwipeout! ' . buf
+      endif
+    endfor
+
+    call filter(s:file_diff_instances, 'v:val isnot a:state')
+    silent! unlet! t:git_changes_file_diff
+    return 0
+  endif
+
+  if get(a:state, 'editable', 0)
+        \ && bufexists(get(a:state, 'new_buf', -1))
+        \ && getbufvar(a:state.new_buf, '&modified')
+    if s:prompt_confirm('GitChangesDiff: save changes before closing?',
+          \ "&Save\n&Cancel", 1) != 1
+      return -1
+    endif
+    let win = get(a:state, 'new_win', 0)
+    if s:win_exists(win)
+      call win_execute(win, 'silent! write')
+    endif
+    if getbufvar(a:state.new_buf, '&modified')
+      call s:err('failed to save: ' . a:state.spec.path)
+      return -1
+    endif
+  endif
+
   call s:file_diff_deactivate(a:state)
   call s:job_stop(a:state, 'diff-old')
   call s:job_stop(a:state, 'diff-new')
@@ -5056,6 +5492,13 @@ function! s:close_file_diff(state) abort
   call filter(s:file_diff_instances, 'v:val isnot a:state')
   if tabnr > 0
     execute 'tabclose ' . tabnr
+  endif
+
+  if get(a:state, 'editable', 0)
+        \ && bufexists(get(a:state, 'new_buf', -1))
+    call setbufvar(a:state.new_buf, 'git_changes_file_diff', {})
+    call setbufvar(a:state.new_buf, 'gc_kind', '')
+    call setbufvar(a:state.new_buf, 'gc_side', '')
   endif
   return tabnr
 endfunction

@@ -29,6 +29,7 @@ return {
       "GitChanges",
       "GitChangesQuit",
       "GitChangesDiff",
+      "GitChangesDiffQuit",
       "GitChangesCommit",
       "GitChangesPull",
       "GitChangesPush",
@@ -136,17 +137,6 @@ toggle one fold, or set `g:git_changes_fold = 0` to keep everything expanded.
 
 | Key | Action |
 | --- | --- |
-| `q` | Close the diff tab |
-| `r` | Re-read both sides |
-| `s` | Stage the current file |
-| `u` | Unstage the current file |
-| `o` | Open the file in a new tab at the cursor line |
-| `D` | Discard unstaged changes for the file |
-| `dS` | Toggle staged comparison (`git diff --staged`) |
-| `cc` | Commit staged changes |
-| `C` | Commit staged changes using an editor with a status template |
-| `gs` | Open the main GitChanges view |
-| `Tab` / `S-Tab` | Switch between the two windows |
 | `]c` / `[c` | Jump to the next / previous hunk |
 | `zo` / `zc` | Open / close a fold |
 | `zR` / `zM` | Open / close all folds |
@@ -170,6 +160,7 @@ toggle one fold, or set `g:git_changes_fold = 0` to keep everything expanded.
 | `-` | Stage or unstage file |
 | `d` | Discard unstaged changes, or delete an untracked file |
 | `o` | Open the current file in a new tab (also in diff windows) |
+| `gd` | Open the editable file diff for the selected file (also in diff panes) |
 | `yy` | Copy the absolute file path |
 | `cc` | Commit staged changes |
 | `C` | Commit staged changes using an editor with a status template |
@@ -307,6 +298,7 @@ let g:git_changes_keymaps = {
 | `file_discard_diff` | `D` |
 | `staged_view` | `dS` |
 | `open_file` | `o` |
+| `diff_file` | `gd` |
 | `scroll_half_down` | `<C-d>` |
 | `scroll_half_up` | `<C-u>` |
 | `copy_file` | `yy` |

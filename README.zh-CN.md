@@ -29,6 +29,7 @@ return {
       "GitChanges",
       "GitChangesQuit",
       "GitChangesDiff",
+      "GitChangesDiffQuit",
       "GitChangesCommit",
       "GitChangesPull",
       "GitChangesPush",
@@ -133,17 +134,6 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 
 | 按键 | 操作 |
 | --- | --- |
-| `q` | 关闭 diff tab |
-| `r` | 重新读取两侧内容 |
-| `s` | stage 当前文件 |
-| `u` | unstage 当前文件 |
-| `o` | 在新标签页打开当前文件并跳到光标行 |
-| `D` | discard 当前文件的未暂存修改 |
-| `dS` | 切换暂存区对比（`git diff --staged`） |
-| `cc` | commit 已暂存内容 |
-| `C` | 使用编辑器提交已暂存内容（显示分支和暂存状态） |
-| `gs` | 打开主 GitChanges 视图 |
-| `Tab` / `S-Tab` | 在两个窗口间切换 |
 | `]c` / `[c` | 跳到下一个 / 上一个差异块 |
 | `zo` / `zc` | 打开 / 关闭当前折叠 |
 | `zR` / `zM` | 打开 / 关闭所有折叠 |
@@ -167,6 +157,7 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 | `-` | stage 或 unstage 文件 |
 | `d` | 丢弃未暂存改动，或删除未跟踪文件 |
 | `o` | 在新标签页打开当前文件 |
+| `gd` | 打开当前文件的可编辑 diff（在 diff 面板里也可用） |
 | `yy` | 复制文件绝对路径 |
 | `cc` | commit 已暂存内容 |
 | `C` | 使用编辑器提交已暂存内容（显示分支和暂存状态） |
@@ -289,6 +280,7 @@ let g:git_changes_keymaps = {
 | `file_discard_diff` | `D` |
 | `staged_view` | `dS` |
 | `open_file` | `o` |
+| `diff_file` | `gd` |
 | `scroll_half_down` | `<C-d>` |
 | `scroll_half_up` | `<C-u>` |
 | `copy_file` | `yy` |

@@ -134,7 +134,12 @@ function! Snap(name) abort
         \ 'closedlast=' . closed_last,
         \ 'diffopt=' . &g:diffopt,
         \ ], g:out . '/' . a:name . '.txt')
-  tabclose
+  if get(st, 'inline', 0)
+    only
+    unlet! t:git_changes_file_diff
+  else
+    tabclose
+  endif
 endfunction
 
 function! Run(name, cmd) abort
@@ -153,7 +158,12 @@ function! RunError(name, cmd) abort
         \ + split(execute('messages'), "\n"),
         \ g:out . '/' . a:name . '.txt')
   if has_tab
-    tabclose
+    if get(t:git_changes_file_diff, 'inline', 0)
+      only
+      unlet! t:git_changes_file_diff
+    else
+      tabclose
+    endif
   endif
 endfunction
 
@@ -201,51 +211,11 @@ call Run('default-staged-file', 'GitChangesDiff')
 call Run('staged', 'GitChangesDiff --staged')
 call Run('cached', 'GitChangesDiff --cached')
 
-edit b.txt
-GitChangesDiff
-call Wait()
-call Press('dS')
-call Snap('staged-toggle-on')
-
-GitChangesDiff
-call Wait()
-call Press('dS')
-call Press('dS')
-call Snap('staged-toggle-off')
-
 edit c.txt
 call Run('untracked', 'GitChangesDiff')
 
 edit d.txt
 call Run('deleted-staged', 'GitChangesDiff --staged')
-
-edit stage.txt
-GitChangesDiff --staged
-call Wait()
-call Press('s')
-call Snap('stage-key-s')
-
-GitChangesDiff --staged
-call Wait()
-call Press('u')
-call Snap('stage-key-u')
-
-edit! discard.txt
-GitChangesDiff
-call Wait()
-let g:git_changes_confirm_override = 2
-call Press('D')
-call Snap('discard-cancel')
-call writefile(readfile('discard.txt'), g:out . '/discard-cancel-disk.txt')
-
-edit! discard.txt
-GitChangesDiff
-call Wait()
-let g:git_changes_confirm_override = 1
-call Press('D')
-call Snap('discard-yes')
-call writefile(readfile('discard.txt'), g:out . '/discard-yes-disk.txt')
-edit! discard.txt
 
 edit fold.txt
 call Run('regular-fold', 'GitChangesDiff')
@@ -482,29 +452,8 @@ assert_eq "untracked new" "new file" "$(value untracked new)"
 assert_eq "deleted staged old" "old" "$(value deleted-staged old)"
 assert_eq "deleted staged new" "" "$(value deleted-staged new)"
 
-assert_eq "stage key kind" "index" "$(value stage-key-s kind)"
-assert_eq "stage key cached" "1" "$(value stage-key-s cached)"
-assert_eq "stage key new" "staged by key" "$(value stage-key-s new)"
-assert_eq "unstage key kind" "index" "$(value stage-key-u kind)"
-assert_eq "unstage key cached" "1" "$(value stage-key-u cached)"
-assert_eq "unstage key new" "base" "$(value stage-key-u new)"
 
-assert_eq "dS toggle on kind" "index" "$(value staged-toggle-on kind)"
-assert_eq "dS toggle on cached" "1" "$(value staged-toggle-on cached)"
-assert_eq "dS toggle on old" "one|two" "$(value staged-toggle-on old)"
-assert_eq "dS toggle on new" "one|TWO|three" "$(value staged-toggle-on new)"
-assert_eq "dS toggle on labels" "HEAD b.txt|INDEX b.txt" "$(value staged-toggle-on old_label)|$(value staged-toggle-on new_label)"
-assert_eq "dS toggle off kind" "worktree" "$(value staged-toggle-off kind)"
-assert_eq "dS toggle off cached" "0" "$(value staged-toggle-off cached)"
-assert_eq "dS toggle off old" "one|TWO|three" "$(value staged-toggle-off old)"
-assert_eq "dS toggle off new" "one|TWO|three" "$(value staged-toggle-off new)"
-assert_eq "dS toggle off labels" "INDEX b.txt|WORKTREE b.txt" "$(value staged-toggle-off old_label)|$(value staged-toggle-off new_label)"
 
-assert_eq "discard cancel new" "changed" "$(value discard-cancel new)"
-assert_contains "discard cancel keeps file" "changed" "$out/discard-cancel-disk.txt"
-assert_eq "discard yes old" "base" "$(value discard-yes old)"
-assert_eq "discard yes new" "base" "$(value discard-yes new)"
-assert_contains "discard yes restores file" "base" "$out/discard-yes-disk.txt"
 assert_eq "binary old" "(binary file - no side-by-side diff)" "$(value binary old)"
 assert_eq "binary new" "(binary file - no side-by-side diff)" "$(value binary new)"
 
