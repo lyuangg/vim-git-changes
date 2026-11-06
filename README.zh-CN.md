@@ -227,6 +227,9 @@ let g:git_changes_blame_line_format = '%a %d'
 " 状态栏防抖延迟毫秒数（0 = 立即更新）
 let g:git_changes_statusline_delay = 500
 
+" 当前文件有未暂存改动时显示的标记（空字符串关闭）
+let g:git_changes_statusline_unstaged = '*'
+
 " blame 窗口宽度
 let g:git_changes_blame_width = 40
 

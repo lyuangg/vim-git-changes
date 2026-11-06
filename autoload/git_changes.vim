@@ -4261,12 +4261,16 @@ function! s:git_dir_for(dir) abort
   return result
 endfunction
 
-" Lightweight statusline helper: [Git(branch)] inside a repository. Reads
-" .git/HEAD directly, so redraws never spawn git and the branch follows the
-" current buffer's repository instead of the working directory.
+" Lightweight statusline helper: [Git(branch)] inside a repository. The branch
+" comes from .git/HEAD directly, so it follows the current buffer's repository
+" instead of the working directory. The unstaged marker is computed by a
+" background job and never blocks the statusline.
 let s:statusline_text_cache = {}
 let s:statusline_last = {}
 let s:statusline_timer = -1
+let s:statusline_unstaged_cache = {}
+let s:statusline_unstaged_jobs = {}
+let s:statusline_unstaged_interval = 1000
 
 function! s:statusline_mode_ok() abort
   return mode() ==# 'n' || mode() ==# 'c'
@@ -4292,19 +4296,108 @@ function! s:redraw_statusline() abort
   endif
 endfunction
 
+" Whether the current file has unstaged changes, checked in the background so
+" statusline redraws stay fast. Returns the last known value until the job is
+" done.
+function! s:statusline_unstaged(root, path) abort
+  let key = a:root . nr2char(31) . a:path
+  let cached = get(s:statusline_unstaged_cache, key, {})
+
+  " Drop jobs whose buffer was wiped before the callback could run.
+  for job_key in keys(s:statusline_unstaged_jobs)
+    let job = s:statusline_unstaged_jobs[job_key]
+    if !bufexists(get(job.state, 'files_buf', -1))
+      call s:job_stop(job.state, 'unstaged')
+      if has_key(s:statusline_unstaged_jobs, job_key)
+        call remove(s:statusline_unstaged_jobs, job_key)
+      endif
+    endif
+  endfor
+
+  if empty(cached)
+        \ || reltimefloat(reltime(cached.time)) * 1000
+        \      >= s:statusline_unstaged_interval
+    if !has_key(s:statusline_unstaged_jobs, key)
+      call s:start_statusline_unstaged_job(a:root, a:path, key)
+    endif
+  endif
+
+  return empty(cached) ? 0 : cached.unstaged
+endfunction
+
+function! s:start_statusline_unstaged_job(root, path, key) abort
+  let fake = {'files_buf': bufnr('%'), 'root': a:root, 'unstaged_tok': 1}
+  let ctx = {'key': a:key, 'state': fake}
+  let s:statusline_unstaged_jobs[a:key] = {'state': fake, 'ctx': ctx}
+  call s:git_job(fake, 'unstaged', 'unstaged_tok', 1,
+        \ ['status', '--porcelain=v1', '--untracked-files=normal',
+        \  '--', a:path],
+        \ function('s:on_statusline_unstaged_job', [ctx]))
+endfunction
+
+function! s:on_statusline_unstaged_job(ctx, result) abort
+  let key = a:ctx.key
+  let job = get(s:statusline_unstaged_jobs, key, {})
+  if empty(job) || job.state isnot a:ctx.state
+    return
+  endif
+  call remove(s:statusline_unstaged_jobs, key)
+
+  let unstaged = 0
+  for file in s:parse_worktree_status(a:result.out)
+    let xy = get(file, 'status_text', '')
+    if xy ==# '??'
+          \ || (strlen(xy) >= 2 && strpart(xy, 1, 1) !=# ' ')
+      let unstaged = 1
+      break
+    endif
+  endfor
+
+  let s:statusline_unstaged_cache[key] = {
+        \ 'time': reltime(),
+        \ 'unstaged': unstaged,
+        \ }
+  if len(s:statusline_unstaged_cache) > 200
+    call filter(s:statusline_unstaged_cache,
+          \ 'reltimefloat(reltime(v:val.time)) * 1000 < 60000')
+  endif
+
+  if s:statusline_mode_ok()
+    silent! redrawstatus
+  endif
+endfunction
+
+function! s:statusline_unstaged_marker() abort
+  let marker = get(g:, 'git_changes_statusline_unstaged', '*')
+  if type(marker) != type('') || empty(marker)
+    return ''
+  endif
+  if &buftype !=# ''
+    return ''
+  endif
+
+  let [root, path] = s:buffer_repo_path()
+  if empty(root) || empty(path)
+    return ''
+  endif
+  return s:statusline_unstaged(root, path) ? marker : ''
+endfunction
+
 function! git_changes#statusline() abort
   let dir = expand('%:p:h')
   if empty(dir)
     let dir = getcwd()
   endif
+  let file = expand('%:p')
+  let key = dir . nr2char(31) . file
 
   " Refresh only in normal mode; in insert/visual mode show the last value.
   if !s:statusline_mode_ok()
-    return get(s:statusline_text_cache, dir, '')
+    return get(s:statusline_text_cache, key, '')
   endif
 
   let delay = s:statusline_delay()
-  let last = get(s:statusline_last, dir, [])
+  let last = get(s:statusline_last, key, [])
   if delay > 0 && !empty(last)
         \ && reltimefloat(reltime(last[0])) * 1000 < delay
     call s:schedule_statusline_redraw()
@@ -4319,14 +4412,16 @@ function! git_changes#statusline() abort
   let head = get(readfile(gitdir . '/HEAD', '', 1), 0, '')
   if head =~# '^ref: '
     let branch = substitute(strpart(head, 5), '^refs/heads/', '', '')
-    let text = '[Git(' . branch . ')]'
+    let label = 'Git(' . branch . ')'
   elseif head =~# '^[0-9a-f]\{40\}'
-    let text = '[Git(' . strpart(head, 0, 7) . ')]'
+    let label = 'Git(' . strpart(head, 0, 7) . ')'
   else
-    let text = '[Git]'
+    let label = 'Git'
   endif
-  let s:statusline_text_cache[dir] = text
-  let s:statusline_last[dir] = [reltime(), text]
+
+  let text = '[' . label . s:statusline_unstaged_marker() . ']'
+  let s:statusline_text_cache[key] = text
+  let s:statusline_last[key] = [reltime(), text]
   return text
 endfunction
 
@@ -4338,10 +4433,15 @@ function! s:statusline_clear() abort
   let s:gitdir_cache = {}
   let s:statusline_text_cache = {}
   let s:statusline_last = {}
+  let s:statusline_unstaged_cache = {}
   if s:statusline_timer != -1
     call timer_stop(s:statusline_timer)
     let s:statusline_timer = -1
   endif
+  for job in values(s:statusline_unstaged_jobs)
+    call s:job_stop(job.state, 'unstaged')
+  endfor
+  let s:statusline_unstaged_jobs = {}
   let s:blame_line_cache = {}
   for st in values(s:blame_debounce)
     if st.timer != -1

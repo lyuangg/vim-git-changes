@@ -246,6 +246,9 @@ let g:git_changes_blame_line_format = '%a %d'
 " Statusline debounce delay in ms (0 = immediate)
 let g:git_changes_statusline_delay = 500
 
+" Marker shown when the current file has unstaged changes (empty disables)
+let g:git_changes_statusline_unstaged = '*'
+
 " Blame pane width
 let g:git_changes_blame_width = 40
 
