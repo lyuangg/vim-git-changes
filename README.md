@@ -92,7 +92,7 @@ toggle one fold, or set `g:git_changes_fold = 0` to keep everything expanded.
 :GitChangesCommit
 :GitChangesCommit fix typo in README
 
-" Edit the message in a new tab, then :w to commit
+" Edit the message in a new tab, then :w or :x to commit
 :GitChangesCommit -e
 
 " Pull or push the current branch
@@ -261,8 +261,8 @@ let g:git_changes_branches_height = 8
 " Commits loaded per page (press L to load the next batch)
 let g:git_changes_max_commits = 200
 
-" Exclude merge commits from the commit list
-let g:git_changes_exclude_merges = 1
+" Exclude merge commits from the commit list (0 = show them)
+let g:git_changes_exclude_merges = 0
 
 " Show the WORK entry on startup
 let g:git_changes_show_worktree = 1

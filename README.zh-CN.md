@@ -89,7 +89,7 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 :GitChangesCommit
 :GitChangesCommit fix typo in README
 
-" 打开新标签页编辑 commit message，:w 提交
+" 打开新标签页编辑 commit message，:w 或 :x 提交
 :GitChangesCommit -e
 
 " pull / push 当前分支
@@ -242,8 +242,8 @@ let g:git_changes_branches_height = 8
 " 每页加载多少个 commit（按 L 加载下一批）
 let g:git_changes_max_commits = 200
 
-" 是否排除 merge commit
-let g:git_changes_exclude_merges = 1
+" 是否排除 merge commit（0 = 显示）
+let g:git_changes_exclude_merges = 0
 
 " 启动时是否显示 WORK 条目
 let g:git_changes_show_worktree = 1

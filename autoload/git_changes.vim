@@ -2014,7 +2014,8 @@ function! s:open_commit_editor(root, on_done) abort
   setlocal nobuflisted
   setlocal filetype=gitcommit
   call setline(1, s:commit_template({'root': a:root}))
-  setlocal nomodified
+  setlocal modified
+  let b:git_changes_commit_tick = b:changedtick
   execute 'nnoremap <buffer> <silent> q ' . s:cmd_rhs(':<C-u>quit<CR>')
 
   let b:git_changes_commit = {'root': a:root, 'on_done': a:on_done}
@@ -2022,10 +2023,21 @@ function! s:open_commit_editor(root, on_done) abort
     autocmd! * <buffer>
     execute 'autocmd BufWriteCmd <buffer> call '
           \ . s:sid . 'apply_commit_message()'
+    execute 'autocmd QuitPre <buffer> call '
+          \ . s:sid . 'cancel_unmodified_commit()'
   augroup END
 
   call cursor(1, 1)
-  echomsg 'Write the commit message, then :w to commit or :q to cancel'
+  echomsg 'Write the commit message, then :w or :x to commit or :q to cancel'
+endfunction
+
+function! s:cancel_unmodified_commit() abort
+  " The template starts the buffer in modified state so :x writes (and commits)
+  " even when the message was not edited. Let :q cancel without a warning when
+  " the buffer still matches that initial template.
+  if get(b:, 'git_changes_commit_tick', -1) == b:changedtick
+    setlocal nomodified
+  endif
 endfunction
 
 function! s:apply_commit_message() abort
@@ -3058,7 +3070,7 @@ function! s:load_commits(state, ...) abort
   endif
 
   let args = ['log']
-  if get(g:, 'git_changes_exclude_merges', 1)
+  if get(g:, 'git_changes_exclude_merges', 0)
     call add(args, '--no-merges')
   endif
   call extend(args, ['--date=short', '--skip=' . skip,
