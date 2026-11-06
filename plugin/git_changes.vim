@@ -3,6 +3,10 @@ if exists('g:loaded_git_changes')
 endif
 let g:loaded_git_changes = 1
 
+function! GitChangesStatusline() abort
+  return git_changes#statusline()
+endfunction
+
 command! -bar -nargs=* -complete=customlist,git_changes#complete_refs GitChanges call git_changes#open(<f-args>)
 command! -bar GitChangesQuit   call git_changes#quit()
 command! -bar GitChangesDiffQuit call git_changes#diff_quit()

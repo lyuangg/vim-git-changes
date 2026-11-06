@@ -100,6 +100,17 @@ toggle one fold, or set `g:git_changes_fold = 0` to keep everything expanded.
 :GitChangesPush
 ```
 
+### Statusline
+
+```vim
+set statusline+=%{GitChangesStatusline()}
+```
+
+Shows `[Git(branch)]` inside a repository and nothing elsewhere. The branch is
+cached for a couple of seconds so redraws do not run git every time. The same
+value is available from `git_changes#statusline()`. With lazy loading, make sure
+the plugin is loaded at startup if the statusline should work immediately.
+
 ### Blame
 
 ```vim

@@ -1962,6 +1962,7 @@ function! s:apply_commit_message() abort
 endfunction
 
 function! s:reload_current_branch(state) abort
+  call s:statusline_clear()
   call s:cancel_pending(a:state)
   call s:cancel_refresh(a:state)
   let a:state.log_range = ''
@@ -4198,6 +4199,39 @@ function! git_changes#diff_quit() abort
     return
   endif
   call s:close_file_diff(state)
+endfunction
+
+let s:statusline_cache = {}
+
+" Lightweight statusline helper: [Git(branch)] inside a repository.
+function! git_changes#statusline() abort
+  let key = getcwd() . "\n" . expand('%:p')
+  let now = localtime()
+  let cached = get(s:statusline_cache, key, {})
+  if !empty(cached) && now - cached.time < 2
+    return cached.text
+  endif
+
+  let root = s:repo_root()
+  let text = ''
+  if !empty(root)
+    let branch = s:current_branch(root)
+    if empty(branch)
+      let sha = s:git_one(root, 'rev-parse --short HEAD')
+      let branch = empty(sha) ? '' : sha
+    endif
+    let text = empty(branch) ? '[Git]' : '[Git(' . branch . ')]'
+  endif
+
+  let s:statusline_cache[key] = {'time': now, 'text': text}
+  if len(s:statusline_cache) > 200
+    call filter(s:statusline_cache, 'now - v:val.time < 10')
+  endif
+  return text
+endfunction
+
+function! s:statusline_clear() abort
+  let s:statusline_cache = {}
 endfunction
 
 " Resolve an optional command argument to a path relative to the repo root.

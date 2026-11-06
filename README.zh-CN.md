@@ -97,6 +97,16 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 :GitChangesPush
 ```
 
+### 状态栏
+
+```vim
+set statusline+=%{GitChangesStatusline()}
+```
+
+在仓库内显示 `[Git(分支名)]`，不在仓库内返回空。分支名会缓存几秒，避免每次重绘都
+执行 git；也可以直接使用 `git_changes#statusline()`。如果插件是懒加载的，需要保证
+启动时已加载，状态栏才能立即生效。
+
 ### Blame
 
 ```vim
