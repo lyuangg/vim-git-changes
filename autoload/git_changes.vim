@@ -600,11 +600,24 @@ function! s:keymaps() abort
   return maps
 endfunction
 
+" Use <Cmd> mappings when available: they do not enter command-line mode, so
+" holding a mapped key does not leave characters on the command line.
+function! s:cmd_rhs(rhs) abort
+  if !(has('nvim') || has('patch-8.2.1978'))
+    return a:rhs
+  endif
+  if a:rhs =~# '^:<C-u>.*<CR>$'
+    return '<Cmd>' . strpart(a:rhs, 6, strlen(a:rhs) - 10) . '<CR>'
+  endif
+  return a:rhs
+endfunction
+
 function! s:map_fixed(key, rhs) abort
   if !s:keymaps_enabled()
     return
   endif
-  execute 'silent! nnoremap <buffer> <silent> ' . a:key . ' ' . a:rhs
+  execute 'silent! nnoremap <buffer> <silent> ' . a:key . ' '
+        \ . s:cmd_rhs(a:rhs)
 endfunction
 
 function! s:map_keys(action, rhs) abort
@@ -621,11 +634,12 @@ function! s:map_keys(action, rhs) abort
     return
   endif
 
+  let rhs = s:cmd_rhs(a:rhs)
   for key in keys
     if empty(key)
       continue
     endif
-    execute 'silent! nnoremap <buffer> <silent> ' . key . ' ' . a:rhs
+    execute 'silent! nnoremap <buffer> <silent> ' . key . ' ' . rhs
   endfor
 endfunction
 
@@ -1645,7 +1659,7 @@ function! s:edit_commit_message() abort
   setlocal filetype=gitcommit
   call setline(1, message)
   setlocal nomodified
-  nnoremap <buffer> <silent> q :<C-u>quit<CR>
+  execute 'nnoremap <buffer> <silent> q ' . s:cmd_rhs(':<C-u>quit<CR>')
 
   let b:git_changes_edit = {
         \ 'state': state,
@@ -1913,7 +1927,7 @@ function! s:open_commit_editor(root, on_done) abort
   setlocal filetype=gitcommit
   call setline(1, s:commit_template({'root': a:root}))
   setlocal nomodified
-  nnoremap <buffer> <silent> q :<C-u>quit<CR>
+  execute 'nnoremap <buffer> <silent> q ' . s:cmd_rhs(':<C-u>quit<CR>')
 
   let b:git_changes_commit = {'root': a:root, 'on_done': a:on_done}
   augroup git_changes_commit_message
@@ -5937,8 +5951,8 @@ function! git_changes#blame() abort
     let configured = 40
   endif
   execute 'vertical resize ' . max([12, configured])
-  execute 'nnoremap <buffer> <silent> q :<C-u>call '
-        \ . s:sid . 'blame_close()<CR>'
+  execute 'nnoremap <buffer> <silent> q '
+        \ . s:cmd_rhs(':<C-u>call ' . s:sid . 'blame_close()<CR>')
 
   let info = {
         \ 'win': blame_win,
