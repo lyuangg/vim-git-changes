@@ -4264,10 +4264,51 @@ endfunction
 " Lightweight statusline helper: [Git(branch)] inside a repository. Reads
 " .git/HEAD directly, so redraws never spawn git and the branch follows the
 " current buffer's repository instead of the working directory.
+let s:statusline_text_cache = {}
+let s:statusline_last = {}
+let s:statusline_timer = -1
+
+function! s:statusline_mode_ok() abort
+  return mode() ==# 'n' || mode() ==# 'c'
+endfunction
+
+function! s:statusline_delay() abort
+  let value = get(g:, 'git_changes_statusline_delay', 500)
+  return type(value) == type(0) && value > 0 ? value : 0
+endfunction
+
+function! s:schedule_statusline_redraw() abort
+  if s:statusline_timer != -1 || !exists('*timer_start')
+    return
+  endif
+  let s:statusline_timer = timer_start(s:statusline_delay(),
+        \ {-> s:redraw_statusline()})
+endfunction
+
+function! s:redraw_statusline() abort
+  let s:statusline_timer = -1
+  if s:statusline_mode_ok()
+    silent! redrawstatus
+  endif
+endfunction
+
 function! git_changes#statusline() abort
   let dir = expand('%:p:h')
   if empty(dir)
     let dir = getcwd()
+  endif
+
+  " Refresh only in normal mode; in insert/visual mode show the last value.
+  if !s:statusline_mode_ok()
+    return get(s:statusline_text_cache, dir, '')
+  endif
+
+  let delay = s:statusline_delay()
+  let last = get(s:statusline_last, dir, [])
+  if delay > 0 && !empty(last)
+        \ && reltimefloat(reltime(last[0])) * 1000 < delay
+    call s:schedule_statusline_redraw()
+    return last[1]
   endif
 
   let gitdir = s:git_dir_for(dir)
@@ -4278,19 +4319,31 @@ function! git_changes#statusline() abort
   let head = get(readfile(gitdir . '/HEAD', '', 1), 0, '')
   if head =~# '^ref: '
     let branch = substitute(strpart(head, 5), '^refs/heads/', '', '')
-    return '[Git(' . branch . ')]'
+    let text = '[Git(' . branch . ')]'
   elseif head =~# '^[0-9a-f]\{40\}'
-    return '[Git(' . strpart(head, 0, 7) . ')]'
+    let text = '[Git(' . strpart(head, 0, 7) . ')]'
+  else
+    let text = '[Git]'
   endif
-  return '[Git]'
+  let s:statusline_text_cache[dir] = text
+  let s:statusline_last[dir] = [reltime(), text]
+  return text
 endfunction
 
 let s:blame_line_cache = {}
 let s:blame_line_jobs = {}
+let s:blame_line_display = {}
 
 function! s:statusline_clear() abort
   let s:gitdir_cache = {}
+  let s:statusline_text_cache = {}
+  let s:statusline_last = {}
+  if s:statusline_timer != -1
+    call timer_stop(s:statusline_timer)
+    let s:statusline_timer = -1
+  endif
   let s:blame_line_cache = {}
+  let s:blame_line_display = {}
   for job in values(s:blame_line_jobs)
     call s:job_stop(job.state, 'blame_line')
     if !empty(job.ctx.contents)
@@ -4507,7 +4560,9 @@ function! s:on_blame_line_job(ctx, result) abort
   if len(s:blame_line_cache) > 100
     call filter(s:blame_line_cache, 'localtime() - v:val.time < 30')
   endif
-  silent! redrawstatus
+  if s:statusline_mode_ok()
+    silent! redrawstatus
+  endif
 endfunction
 
 " Asynchronous variant for statuslines: returns cached data immediately and
@@ -4523,6 +4578,18 @@ function! git_changes#blame_line_info_async() abort
   let key = buf . ':' . tick
   let now = localtime()
   let cached = get(s:blame_line_cache, key, {})
+
+  " Do not start or refresh jobs outside normal mode.
+  if !s:statusline_mode_ok()
+    if empty(cached)
+      return {}
+    endif
+    let lnum = line('.')
+    if lnum < 1 || lnum > len(cached.entries)
+      return {}
+    endif
+    return cached.entries[lnum - 1]
+  endif
 
   if empty(cached) || now - cached.time >= 10
     if !has_key(s:blame_line_jobs, key)
@@ -4541,8 +4608,25 @@ function! git_changes#blame_line_info_async() abort
 endfunction
 
 function! git_changes#blame_line_async() abort
+  let buf = bufnr('%')
+  let key = buf . ':' . getbufvar(buf, 'changedtick', 0)
+        \ . ':' . expand('%:p')
+  let delay = s:statusline_delay()
+  let shown = get(s:blame_line_display, buf, {})
+  if delay > 0 && !empty(shown) && get(shown, 'key', '') ==# key
+        \ && reltimefloat(reltime(shown.time)) * 1000 < delay
+    call s:schedule_statusline_redraw()
+    return shown.text
+  endif
+
   let info = git_changes#blame_line_info_async()
-  return empty(info) ? '' : s:format_blame_line(info)
+  let text = empty(info) ? '' : s:format_blame_line(info)
+  let s:blame_line_display[buf] = {
+        \ 'key': key,
+        \ 'time': reltime(),
+        \ 'text': text,
+        \ }
+  return text
 endfunction
 
 " Resolve an optional command argument to a path relative to the repo root.

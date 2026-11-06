@@ -130,6 +130,11 @@ redraws the statusline. The first call after a change may be empty for a moment.
 Use `GitChangesBlameLineSync()` (or `git_changes#blame_line()`) when you need a
 value synchronously.
 
+Statusline values are refreshed at most every
+`g:git_changes_statusline_delay` milliseconds (default 500) and only in normal
+mode; insert and visual modes keep showing the last value. Set the delay to `0`
+to update immediately.
+
 ### Blame
 
 ```vim
@@ -249,6 +254,9 @@ let g:git_changes_width = 40
 
 " Format for GitChangesBlameLine() (%h %a %e %d %s)
 let g:git_changes_blame_line_format = '%a %d'
+
+" Statusline refresh delay in ms (0 = immediate)
+let g:git_changes_statusline_delay = 500
 
 " Blame pane width
 let g:git_changes_blame_width = 40
