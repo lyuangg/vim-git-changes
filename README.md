@@ -106,13 +106,6 @@ toggle one fold, or set `g:git_changes_fold = 0` to keep everything expanded.
 set statusline+=%{GitChangesStatusline()}
 ```
 
-Shows `[Git(branch)]` inside a repository and nothing elsewhere. It reads
-`.git/HEAD` directly, so redraws never spawn git; it follows the current
-buffer's repository (including worktrees and submodules) instead of the working
-directory. The same value is available from `git_changes#statusline()`. With
-lazy loading, make sure the plugin is loaded at startup if the statusline should
-work immediately.
-
 For the blame of the current line:
 
 ```vim
@@ -122,19 +115,13 @@ set statusline+=%{GitChangesBlameLine()}
 The default format is `author date`; set `g:git_changes_blame_line_format` to
 change it (`%h` short hash, `%a` author, `%e` email, `%d` date, `%s` summary).
 `git_changes#blame_line_info()` returns a dict with `sha`, `author`, `email`,
-`date`, and `summary`. Results are cached per buffer revision for a few seconds.
+`date`, and `summary`.
 
 `GitChangesBlameLine()` is asynchronous and safe for statuslines: it returns
 the cached value immediately and refreshes it with a background job, then
 redraws the statusline. The first call after a change may be empty for a moment.
 Use `GitChangesBlameLineSync()` (or `git_changes#blame_line()`) when you need a
 value synchronously.
-
-Statusline values are debounced: after the cursor or file changes, the value is
-updated only once it has been stable for `g:git_changes_statusline_delay`
-milliseconds (default 500). Rapid `j`/`k` movement keeps the previous value.
-Only normal mode updates; insert and visual modes keep the last value. Set the
-delay to `0` for immediate updates.
 
 ### Blame
 
