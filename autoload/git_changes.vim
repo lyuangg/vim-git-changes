@@ -4927,6 +4927,10 @@ function! git_changes#diff_quit() abort
   call git_changes#file_diff#quit()
 endfunction
 
+function! s:open_file_diff_for_current() abort
+  call git_changes#file_diff#open_current()
+endfunction
+
 function! git_changes#complete_diff(arglead, cmdline, cursorpos) abort
   let before = strpart(a:cmdline, 0, a:cursorpos)
   let tokens = split(before, '\s\+')

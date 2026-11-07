@@ -182,6 +182,18 @@ let v:errmsg = ''
 doautocmd VimResized
 call Check('resize main view', empty(v:errmsg), v:errmsg)
 
+" gd must still open the editable file diff after the module split.
+call win_gotoid(st.files_win)
+call cursor(st.files_header + 1, 1)
+normal gd
+call WaitDiff()
+let gd_state = get(t:, 'git_changes_file_diff', {})
+let gd_spec = get(gd_state, 'spec', {})
+call Check('main gd opens file diff',
+      \ !empty(gd_state) && !empty(get(gd_spec, 'path', '')),
+      \ string(gd_spec))
+execute 'GitChangesDiffQuit'
+
 GitChangesQuit
 call Check('main quit', !exists('t:git_changes'), 'tab still open')
 

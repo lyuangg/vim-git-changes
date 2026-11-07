@@ -1158,3 +1158,8 @@ augroup git_changes_file_diff_resize
   autocmd!
   autocmd VimResized * call s:on_resized()
 augroup END
+
+" Entry point used by the browser's gd mapping.
+function! git_changes#file_diff#open_current() abort
+  call s:open_file_diff_for_current()
+endfunction
