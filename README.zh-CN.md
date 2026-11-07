@@ -183,6 +183,8 @@ set statusline+=%{GitChangesBlameLine()}
 | `o` | 在新标签页打开文件（只读面板） |
 | `Tab` / `S-Tab` | 切到新 / 旧面板（只读面板） |
 
+对比两个 ref 时，文件 diff 是只读的：stage、discard、commit 和打开文件等操作不可用。
+
 ### 文件列表
 
 | 按键 | 操作 |

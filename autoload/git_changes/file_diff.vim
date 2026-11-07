@@ -869,6 +869,10 @@ function! s:open_file_diff() abort
   if empty(state) || !s:file_diff_alive(state)
     return
   endif
+  if get(state.spec, 'new_kind', '') ==# 'ref'
+    call git_changes#core_err('open is not available when comparing two refs')
+    return
+  endif
 
   let path = state.root . '/' . state.spec.path
   if !filereadable(path)
@@ -897,17 +901,36 @@ function! s:open_file_diff_for_current() abort
 
   let file = state.files[index]
   let path = state.root . '/' . file.path
-  if !filereadable(path)
-    call git_changes#core_err('file does not exist: ' . file.path)
-    return
-  endif
+  let entry = state.commits[state.commit_index]
 
-  call git_changes#diff_open('-- ' . shellescape(path))
+  if entry.kind ==# 'compare'
+    " Keep the branch/ref comparison instead of falling back to the worktree.
+    call git_changes#diff_open(shellescape(entry.old_ref) . ' '
+          \ . shellescape(entry.new_ref) . ' -- ' . shellescape(path))
+  elseif entry.kind ==# 'commit'
+    let base = git_changes#core_resolve_ref(state.root, entry.sha . '^')
+    if empty(base)
+      call git_changes#core_err('cannot diff a root commit against a parent')
+      return
+    endif
+    call git_changes#diff_open(shellescape(base) . ' '
+          \ . shellescape(entry.sha) . ' -- ' . shellescape(path))
+  else
+    if !filereadable(path)
+      call git_changes#core_err('file does not exist: ' . file.path)
+      return
+    endif
+    call git_changes#diff_open('-- ' . shellescape(path))
+  endif
 endfunction
 
 function! s:commit_file_diff() abort
   let state = get(b:, 'git_changes_file_diff', {})
   if empty(state) || !s:file_diff_alive(state)
+    return
+  endif
+  if get(state.spec, 'new_kind', '') ==# 'ref'
+    call git_changes#core_err('commit is not available when comparing two refs')
     return
   endif
 
@@ -920,6 +943,10 @@ endfunction
 function! s:commit_file_diff_editor() abort
   let state = get(b:, 'git_changes_file_diff', {})
   if empty(state) || !s:file_diff_alive(state)
+    return
+  endif
+  if get(state.spec, 'new_kind', '') ==# 'ref'
+    call git_changes#core_err('commit is not available when comparing two refs')
     return
   endif
 

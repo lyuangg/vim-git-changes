@@ -188,6 +188,9 @@ value synchronously.
 | `o` | Open the file in a tab (read-only panes) |
 | `Tab` / `S-Tab` | Move to the new / old pane (read-only panes) |
 
+When comparing two refs, the file diff is read-only: stage, discard, commit, and
+open-file actions are unavailable.
+
 ### File list
 
 | Key | Action |

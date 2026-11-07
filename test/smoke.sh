@@ -32,9 +32,21 @@ printf 'alpha\nbeta\ngamma\n' > a.txt
 printf 'one\ntwo\n' > b.txt
 git add a.txt b.txt
 git commit -qm 'first'
-printf 'alpha\nBETA\ngamma\n' > a.txt
 printf 'one\nTWO\n' > b.txt
+git commit -qam 'second'
+printf 'alpha\nBETA\ngamma\n' > a.txt
+printf 'one\nSTAGED\n' > b.txt
 git add b.txt
+
+# Create a second branch with a different a.txt without touching the worktree.
+tmp_index="$(mktemp "${TMPDIR:-/tmp}/vim-git-changes-smoke-index.XXXXXX")"
+blob=$(printf 'alpha\nOTHER\ngamma\n' | git hash-object -w --stdin)
+GIT_INDEX_FILE="$tmp_index" git read-tree HEAD
+GIT_INDEX_FILE="$tmp_index" git update-index --add --cacheinfo "100644,$blob,a.txt"
+tree=$(GIT_INDEX_FILE="$tmp_index" git write-tree)
+other_commit=$(printf 'other branch\n' | git commit-tree "$tree" -p HEAD)
+git branch other "$other_commit"
+rm -f "$tmp_index"
 
 cat > "$script" <<'VIM'
 set nocompatible
@@ -196,6 +208,71 @@ execute 'GitChangesDiffQuit'
 
 GitChangesQuit
 call Check('main quit', !exists('t:git_changes'), 'tab still open')
+
+" --- gd on a commit entry ------------------------------------------------
+GitChanges
+call WaitMain()
+let hs = t:git_changes
+call win_gotoid(hs.commits_win)
+normal j
+for i in range(50)
+  if hs.commit_index == 1 && !empty(hs.files)
+    break
+  endif
+  sleep 100m
+endfor
+call Check('commit entry selected', hs.commit_index == 1,
+      \ 'index=' . hs.commit_index)
+call win_gotoid(hs.files_win)
+call cursor(hs.files_header + 1, 1)
+normal gd
+call WaitDiff()
+let hd = get(t:, 'git_changes_file_diff', {})
+let hentry = hs.commits[hs.commit_index]
+call Check('commit gd ref mode',
+      \ get(get(hd, 'spec', {}), 'new_kind', '') ==# 'ref',
+      \ string(get(hd, 'spec', {})))
+call Check('commit gd refs',
+      \ len(get(get(hd, 'spec', {}), 'refs', [])) == 2
+      \ && get(get(hd, 'spec', {}), 'refs', [])[1] == hentry.sha,
+      \ string(get(get(hd, 'spec', {}), 'refs', [])))
+execute 'GitChangesDiffQuit'
+GitChangesQuit
+
+" --- gd keeps the ref comparison -----------------------------------------
+GitChanges HEAD other
+call WaitMain()
+let cs = t:git_changes
+for i in range(50)
+  if !empty(cs.files)
+    break
+  endif
+  sleep 100m
+endfor
+call Check('compare entry selected',
+      \ !empty(cs.commits) && cs.commit_index >= 0
+      \ && cs.commits[cs.commit_index].kind ==# 'compare',
+      \ 'index=' . cs.commit_index . ' commits=' . len(cs.commits))
+
+call win_gotoid(cs.files_win)
+call cursor(cs.files_header + 1, 1)
+normal gd
+call WaitDiff()
+let cd = get(t:, 'git_changes_file_diff', {})
+let centry = cs.commits[cs.commit_index]
+call Check('compare gd ref mode',
+      \ get(get(cd, 'spec', {}), 'new_kind', '') ==# 'ref'
+      \ && !get(cd, 'editable', 1),
+      \ string(get(cd, 'spec', {})))
+call Check('compare gd refs',
+      \ get(get(cd, 'spec', {}), 'refs', []) == [centry.old_ref, centry.new_ref],
+      \ string(get(get(cd, 'spec', {}), 'refs', [])))
+call Check('compare gd content',
+      \ getbufline(cd.old_buf, 1, '$') != getbufline(cd.new_buf, 1, '$'),
+      \ 'old=' . join(getbufline(cd.old_buf, 1, '$'), '|')
+      \ . ' new=' . join(getbufline(cd.new_buf, 1, '$'), '|'))
+execute 'GitChangesDiffQuit'
+GitChangesQuit
 
 " --- file diff ------------------------------------------------------------
 GitChangesDiff
