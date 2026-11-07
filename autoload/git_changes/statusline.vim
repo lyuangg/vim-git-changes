@@ -123,6 +123,36 @@ function! s:start_statusline_unstaged_job(root) abort
         \ function('s:on_statusline_unstaged_job', [ctx]))
 endfunction
 
+" Build a path -> 1 map for paths with unstaged/untracked changes. This is a
+" hot path (one call per repository per statusline tick), so parse the status
+" lines directly instead of allocating a dict for every changed file.
+function! s:unstaged_files(lines) abort
+  let files = {}
+  for line in a:lines
+    if strlen(line) < 4 || strpart(line, 0, 2) ==# '!!'
+      continue
+    endif
+    let xy = strpart(line, 0, 2)
+    let rest = strpart(line, 3)
+    let oldpath = ''
+    if xy =~# '[RC]' && rest =~# ' -> '
+      let pieces = split(rest, ' -> ', 1)
+      if len(pieces) >= 2
+        let oldpath = pieces[0]
+        let rest = pieces[-1]
+      endif
+    endif
+    if xy ==# '??'
+          \ || (strlen(xy) >= 2 && strpart(xy, 1, 1) !=# ' ')
+      let files[rest] = 1
+      if !empty(oldpath)
+        let files[oldpath] = 1
+      endif
+    endif
+  endfor
+  return files
+endfunction
+
 function! s:on_statusline_unstaged_job(ctx, result) abort
   let root = a:ctx.root
   let job = get(s:statusline_unstaged_jobs, root, {})
@@ -131,21 +161,9 @@ function! s:on_statusline_unstaged_job(ctx, result) abort
   endif
   call remove(s:statusline_unstaged_jobs, root)
 
-  let files = {}
-  for file in git_changes#core_parse_worktree_status(a:result.out)
-    let xy = get(file, 'status_text', '')
-    if xy ==# '??'
-          \ || (strlen(xy) >= 2 && strpart(xy, 1, 1) !=# ' ')
-      let files[file.path] = 1
-      if !empty(get(file, 'oldpath', ''))
-        let files[file.oldpath] = 1
-      endif
-    endif
-  endfor
-
   let s:statusline_unstaged_cache[root] = {
         \ 'time': reltime(),
-        \ 'files': files,
+        \ 'files': s:unstaged_files(a:result.out),
         \ }
   if len(s:statusline_unstaged_cache) > 50
     call filter(s:statusline_unstaged_cache,

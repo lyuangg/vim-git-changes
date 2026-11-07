@@ -90,6 +90,16 @@ edit a.txt
 let sl = git_changes#statusline()
 call Check('statusline', sl =~# '^\[Git(' , sl)
 
+let sl_marker = ''
+for i in range(30)
+  sleep 100m
+  let sl_marker = git_changes#statusline()
+  if sl_marker =~# '\*'
+    break
+  endif
+endfor
+call Check('statusline unstaged marker', sl_marker =~# '\*', sl_marker)
+
 let info = git_changes#blame_line_info()
 call Check('blame sync author', get(info, 'author', '') ==# 'smoke', string(info))
 call Check('blame sync sha', strlen(get(info, 'sha', '')) == 8, string(info))

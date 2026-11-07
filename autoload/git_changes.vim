@@ -4988,10 +4988,6 @@ function! git_changes#core_current_repo_path(root) abort
   return s:current_repo_path(a:root)
 endfunction
 
-function! git_changes#core_parse_worktree_status(lines) abort
-  return s:parse_worktree_status(a:lines)
-endfunction
-
 function! git_changes#core_git_run(root, args) abort
   return s:git_run(a:root, a:args)
 endfunction
@@ -5004,16 +5000,8 @@ function! git_changes#core_job_stop(state, key) abort
   call s:job_stop(a:state, a:key)
 endfunction
 
-function! git_changes#core_state_alive(state) abort
-  return s:state_alive(a:state)
-endfunction
-
 function! git_changes#core_err(msg) abort
   call s:err(a:msg)
-endfunction
-
-function! git_changes#core_truncate(text, max) abort
-  return s:truncate(a:text, a:max)
 endfunction
 
 function! git_changes#core_new_scratch(name, filetype) abort
@@ -5074,10 +5062,6 @@ endfunction
 
 function! git_changes#core_open_commit_editor(root, on_done) abort
   call s:open_commit_editor(a:root, a:on_done)
-endfunction
-
-function! git_changes#core_path_relative_to(path, root) abort
-  return s:path_relative_to(a:path, a:root)
 endfunction
 
 function! git_changes#core_prompt_confirm(prompt, choices, default) abort
