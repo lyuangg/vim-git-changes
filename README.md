@@ -275,6 +275,9 @@ let g:git_changes_statusline_delay = 500
 " Marker shown when the current file has unstaged changes (empty disables)
 let g:git_changes_statusline_unstaged = '*'
 
+" How often the unstaged marker is refreshed, in ms
+let g:git_changes_statusline_unstaged_interval = 1000
+
 " Blame pane width
 let g:git_changes_blame_width = 40
 

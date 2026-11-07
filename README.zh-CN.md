@@ -256,6 +256,9 @@ let g:git_changes_statusline_delay = 500
 " 当前文件有未暂存改动时显示的标记（空字符串关闭）
 let g:git_changes_statusline_unstaged = '*'
 
+" 未暂存标记的刷新间隔毫秒数
+let g:git_changes_statusline_unstaged_interval = 1000
+
 " blame 窗口宽度
 let g:git_changes_blame_width = 40
 

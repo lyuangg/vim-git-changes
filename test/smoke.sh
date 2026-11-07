@@ -168,6 +168,10 @@ call Check('main refresh key',
 let pane_sl = getwinvar(st.files_win, '&statusline')
 call Check('pane statusline', pane_sl =~# 'Files', pane_sl)
 
+let v:errmsg = ''
+doautocmd VimResized
+call Check('resize main view', empty(v:errmsg), v:errmsg)
+
 GitChangesQuit
 call Check('main quit', !exists('t:git_changes'), 'tab still open')
 
@@ -179,6 +183,10 @@ call Check('filediff old content', len(getbufline(fd.old_buf, 1, '$')) == 3,
       \ len(getbufline(fd.old_buf, 1, '$')))
 call Check('filediff new content', len(getbufline(fd.new_buf, 1, '$')) == 3,
       \ len(getbufline(fd.new_buf, 1, '$')))
+
+let v:errmsg = ''
+doautocmd VimResized
+call Check('resize file diff', empty(v:errmsg), v:errmsg)
 
 call win_gotoid(fd.old_win)
 call Check('filediff old q', maparg('q', 'n') =~# 'close_file_diff_tab', maparg('q', 'n'))

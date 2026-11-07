@@ -54,7 +54,11 @@ let s:statusline_last = {}
 let s:statusline_timer = -1
 let s:statusline_unstaged_cache = {}
 let s:statusline_unstaged_jobs = {}
-let s:statusline_unstaged_interval = 1000
+
+function! s:statusline_unstaged_interval() abort
+  let value = get(g:, 'git_changes_statusline_unstaged_interval', 1000)
+  return type(value) == type(0) && value > 0 ? value : 1000
+endfunction
 
 function! s:statusline_mode_ok() abort
   return mode() ==# 'n' || mode() ==# 'c'
@@ -101,7 +105,7 @@ function! s:statusline_unstaged(root, path) abort
 
   if empty(cached)
         \ || reltimefloat(reltime(cached.time)) * 1000
-        \      >= s:statusline_unstaged_interval
+        \      >= s:statusline_unstaged_interval()
     if !has_key(s:statusline_unstaged_jobs, a:root)
       call s:start_statusline_unstaged_job(a:root)
     endif
