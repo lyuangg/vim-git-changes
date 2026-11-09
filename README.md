@@ -215,7 +215,9 @@ open-file actions are unavailable.
 | `yy` | Copy the absolute file path |
 | `cc` | Commit staged changes |
 | `C` | Commit staged changes using an editor with a status template |
-| `cb` | Create a branch from the selected branch and switch to it |
+| `cn` | Create a branch from the selected branch and switch to it |
+| `co` | Switch to another branch (also in the commit list and diff panes) |
+| `M` | Merge a branch into the current branch (also in the commit list and diff panes) |
 | `p` | Pull |
 | `P` | Push |
 | `gs` | Open the main GitChanges view |
@@ -242,7 +244,7 @@ open-file actions are unavailable.
 | `co` | Check out the selected branch |
 | `M` | Merge the selected branch into the current branch |
 | `A` | Abort an in-progress merge |
-| `cb` | Create a branch from the selected branch and switch to it |
+| `cn` | Create a branch from the selected branch and switch to it |
 | `d` | Delete the selected local branch |
 | `yy` | Copy the branch name |
 | `?` | Show/hide help (hidden by default) |
@@ -379,7 +381,7 @@ let g:git_changes_keymaps = {
 | `open_main` | `gs` |
 | `pull` | `p` |
 | `push` | `P` |
-| `new_branch` | `cb` |
+| `new_branch` | `cn` |
 | `branch_delete` | `d` |
 | `checkout_branch` | `co` |
 | `merge_branch` | `M` |

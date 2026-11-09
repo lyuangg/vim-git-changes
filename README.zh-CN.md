@@ -209,7 +209,9 @@ set statusline+=%{GitChangesBlameLine()}
 | `yy` | 复制文件绝对路径 |
 | `cc` | commit 已暂存内容 |
 | `C` | 使用编辑器提交已暂存内容（显示分支和暂存状态） |
-| `cb` | 从所选分支新建分支并切换过去 |
+| `cn` | 从所选分支新建分支并切换过去 |
+| `co` | 切换到其它分支（在 commit 列表和 diff 面板里也可用） |
+| `M` | 把指定分支合并到当前分支（在 commit 列表和 diff 面板里也可用） |
 | `p` | pull |
 | `P` | push |
 | `gs` | 打开主 GitChanges 视图 |
@@ -236,7 +238,7 @@ set statusline+=%{GitChangesBlameLine()}
 | `co` | checkout 所选分支 |
 | `M` | 把所选分支合并到当前分支 |
 | `A` | 撤销正在进行的合并 |
-| `cb` | 从所选分支新建分支并切换过去 |
+| `cn` | 从所选分支新建分支并切换过去 |
 | `d` | 删除所选本地分支 |
 | `yy` | 复制分支名 |
 | `?` | 显示 / 隐藏帮助（默认隐藏） |
@@ -358,7 +360,7 @@ let g:git_changes_keymaps = {
 | `open_main` | `gs` |
 | `pull` | `p` |
 | `push` | `P` |
-| `new_branch` | `cb` |
+| `new_branch` | `cn` |
 | `branch_delete` | `d` |
 | `checkout_branch` | `co` |
 | `merge_branch` | `M` |

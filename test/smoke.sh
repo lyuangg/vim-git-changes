@@ -46,6 +46,8 @@ GIT_INDEX_FILE="$tmp_index" git update-index --add --cacheinfo "100644,$blob,a.t
 tree=$(GIT_INDEX_FILE="$tmp_index" git write-tree)
 other_commit=$(printf 'other branch\n' | git commit-tree "$tree" -p HEAD)
 git branch other "$other_commit"
+cur_branch=$(git rev-parse --abbrev-ref HEAD)
+git branch sametip HEAD
 rm -f "$tmp_index"
 
 cat > "$script" <<'VIM'
@@ -57,6 +59,8 @@ execute 'cd ' . fnameescape($GC_REPO)
 let g:out = $GC_OUT
 let g:repo = $GC_REPO
 let g:other = $GC_OTHER
+let g:cur_branch = $GC_BRANCH
+let g:sametip = $GC_SAMETIP
 let g:git_changes_statusline_delay = 0
 let g:git_changes_refresh_debounce_ms = 0
 let g:git_changes_debounce_ms = 0
@@ -214,6 +218,10 @@ call Check('main refresh key',
 for win in [st.old_win, st.new_win]
   call win_gotoid(win)
   call Check('diff pane map refresh', !empty(maparg('r', 'n')), maparg('r', 'n'))
+  call Check('diff pane map co',
+        \ maparg('co', 'n') =~# 'GitChangesBranchCheckout', maparg('co', 'n'))
+  call Check('diff pane map M',
+        \ maparg('M', 'n') =~# 'GitChangesBranchMerge', maparg('M', 'n'))
 endfor
 call win_gotoid(st.new_win)
 let before_commit = st.commit_index
@@ -223,6 +231,46 @@ call Check('diff pane refresh key',
       \ st.commit_index == before_commit && len(st.files) == 2,
       \ 'commit=' . st.commit_index . ' files=' . len(st.files))
 call win_gotoid(st.files_win)
+
+" co prompts for a branch everywhere except the branch list.
+call Check('files map co',
+      \ maparg('co', 'n') =~# 'GitChangesBranchCheckout', maparg('co', 'n'))
+call win_gotoid(st.commits_win)
+call Check('commits map co',
+      \ maparg('co', 'n') =~# 'GitChangesBranchCheckout', maparg('co', 'n'))
+call win_gotoid(st.branches_win)
+call Check('branches co unchanged',
+      \ maparg('co', 'n') !~# 'GitChangesBranchCheckout', maparg('co', 'n'))
+call win_gotoid(st.files_win)
+
+let g:git_changes_input_override = g:sametip
+normal co
+call WaitMain()
+let head = trim(system('git -C ' . g:repo . ' rev-parse --abbrev-ref HEAD'))
+call Check('co switches branch', head ==# g:sametip, head)
+let g:git_changes_input_override = g:cur_branch
+normal co
+call WaitMain()
+let head = trim(system('git -C ' . g:repo . ' rev-parse --abbrev-ref HEAD'))
+call Check('co switches back', head ==# g:cur_branch, head)
+
+" M merges a typed branch everywhere except the branch list.
+call Check('files map M',
+      \ maparg('M', 'n') =~# 'GitChangesBranchMerge', maparg('M', 'n'))
+call win_gotoid(st.commits_win)
+call Check('commits map M',
+      \ maparg('M', 'n') =~# 'GitChangesBranchMerge', maparg('M', 'n'))
+call win_gotoid(st.branches_win)
+call Check('branches M unchanged',
+      \ maparg('M', 'n') !~# 'GitChangesBranchMerge', maparg('M', 'n'))
+call win_gotoid(st.files_win)
+
+let g:git_changes_input_override = g:sametip
+let g:git_changes_confirm_override = 1
+normal M
+call WaitMain()
+call Check('M merges branch', st.status =~# 'Merged branch: ' . g:sametip,
+      \ st.status)
 
 " statusline text should be set for the files pane
 let pane_sl = getwinvar(st.files_win, '&statusline')
@@ -398,6 +446,7 @@ qa!
 VIM
 
 GC_PLUGIN="$plugin_dir" GC_REPO="$repo" GC_OTHER="$other" GC_OUT="$out" \
+  GC_BRANCH="$cur_branch" GC_SAMETIP=sametip \
   "$VIM_BIN" -Nu NONE -es -S "$script" >/dev/null 2>&1 || true
 
 cat "$out/result.txt"

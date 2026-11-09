@@ -656,7 +656,7 @@ function! s:default_keymaps() abort
         \ 'open_main': 'gs',
         \ 'pull': 'p',
         \ 'push': 'P',
-        \ 'new_branch': 'cb',
+        \ 'new_branch': 'cn',
         \ 'branch_delete': 'd',
         \ 'checkout_branch': 'co',
         \ 'merge_branch': 'M',
@@ -790,6 +790,8 @@ function! s:init_list_buffer(state, kind) abort
   call s:map_action('cycle_prev', 'cycle_pane', -1)
   call s:map_left_pane_keys()
   call s:map_left_action_keys()
+  call s:map_keys('checkout_branch', ':<C-u>GitChangesBranchCheckout<CR>')
+  call s:map_keys('merge_branch', ':<C-u>GitChangesBranchMerge<CR>')
   call s:map_open_main()
   call s:map_action('worktree', 'goto_worktree')
 
@@ -842,6 +844,8 @@ function! s:init_diff_buffer(state, side) abort
   call s:map_action('push', 'push_current')
   call s:map_action('new_branch', 'new_branch')
   call s:map_action('commit_editor', 'commit_with_editor')
+  call s:map_keys('checkout_branch', ':<C-u>GitChangesBranchCheckout<CR>')
+  call s:map_keys('merge_branch', ':<C-u>GitChangesBranchMerge<CR>')
   call s:map_left_pane_keys()
   call s:map_action('cycle_next', 'cycle_pane', 1)
   call s:map_action('cycle_prev', 'cycle_pane', -1)
@@ -2998,7 +3002,7 @@ function! s:files_header_lines(state, entry) abort
     if a:state.show_help
       call add(lines, '# s:stage u:unstage -:toggle S/U:all t:tree')
       call add(lines, '# r:refresh d:discard o:open gd:diff ?:hide')
-      call add(lines, '# Esc:worktree yy:path cc:commit cb:new')
+      call add(lines, '# Esc:worktree yy:path cc:commit cn:new co:switch M:merge')
       call add(lines, '# C:edit p:pull P:push')
       call add(lines, '# J/K:scroll ]c/[c:hunk 1/2/3/4:panes Tab/S-Tab')
       call add(lines, '# H/L:scroll diff left/right')
@@ -3007,7 +3011,7 @@ function! s:files_header_lines(state, entry) abort
     call add(lines, '# Range: ' . a:state.list_title)
     if a:state.show_help
       call add(lines, '# t:tree r:refresh ?:hide yy:path Esc:worktree')
-      call add(lines, '# cc:commit cb:new C:edit p:pull P:push')
+      call add(lines, '# cc:commit cn:new co:switch M:merge C:edit p:pull P:push')
       call add(lines, '# J/K:scroll ]c/[c:hunk 1/2/3/4:panes Tab/S-Tab')
       call add(lines, '# H/L:scroll diff left/right')
     endif
@@ -3024,7 +3028,7 @@ function! s:files_header_lines(state, entry) abort
     endfor
     if a:state.show_help
       call add(lines, '# t:tree r:refresh ?:hide yy:path Esc:worktree')
-      call add(lines, '# cc:commit cb:new C:edit p:pull P:push')
+      call add(lines, '# cc:commit cn:new co:switch M:merge C:edit p:pull P:push')
       call add(lines, '# J/K:scroll ]c/[c:hunk 1/2/3/4:panes Tab/S-Tab')
       call add(lines, '# H/L:scroll diff left/right')
     endif
@@ -4734,7 +4738,10 @@ function! git_changes#branch_checkout(...) abort
     return
   endif
 
-  let name = a:0 ? trim(a:1)
+  " ":GitChangesBranchCheckout" without an argument still passes an
+  " empty <q-args>, so decide on the value rather than a:0.
+  let arg = trim(a:0 ? a:1 : '')
+  let name = !empty(arg) ? arg
         \ : trim(s:prompt_input('Branch: ', '',
         \       'customlist,git_changes#complete_branches'))
   if empty(name)
@@ -4757,7 +4764,10 @@ function! git_changes#branch_merge(...) abort
     return
   endif
 
-  let name = a:0 ? trim(a:1)
+  " ":GitChangesBranchMerge" without an argument still passes an empty
+  " <q-args>, so decide on the value rather than a:0.
+  let arg = trim(a:0 ? a:1 : '')
+  let name = !empty(arg) ? arg
         \ : trim(s:prompt_input('Merge branch: ', '',
         \       'customlist,git_changes#complete_branches'))
   if empty(name)
