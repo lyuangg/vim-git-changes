@@ -912,6 +912,7 @@ function! s:init_branch_buffer(state) abort
   call s:map_left_pane_keys()
   call s:map_left_action_keys()
   call s:map_open_main()
+  call s:map_action('worktree', 'goto_worktree')
   call s:map_action('branch_delete', 'delete_branch')
   call s:map_action('copy_branch', 'copy_branch_name')
   call s:map_action('branch_group_next', 'cycle_branch_kind', 1)
@@ -2584,15 +2585,96 @@ function! s:branch_kind_noun(kind) abort
         \ : a:kind ==# 'tag' ? 'tags' : 'branches'
 endfunction
 
+" Parse %(upstream:track), e.g. "[ahead 1, behind 2]" or "[gone]",
+" into [ahead, behind, gone].
+function! s:parse_upstream_track(track) abort
+  if a:track =~# '\[gone\]'
+    return [0, 0, 1]
+  endif
+  return [str2nr(matchstr(a:track, 'ahead \zs\d\+')),
+        \ str2nr(matchstr(a:track, 'behind \zs\d\+')), 0]
+endfunction
+
+" Sync markers shown after a branch name, relative to its upstream.
+function! s:branch_sync_text(ref) abort
+  if get(a:ref, 'gone', 0)
+    return ' ✗'
+  endif
+
+  let text = ''
+  if get(a:ref, 'ahead', 0) > 0
+    let text .= ' ↑' . a:ref.ahead
+  endif
+  if get(a:ref, 'behind', 0) > 0
+    let text .= ' ↓' . a:ref.behind
+  endif
+  return text
+endfunction
+
+" True when both paths point at the same directory, with symlinks resolved.
+function! s:same_dir(path_a, path_b) abort
+  let a = substitute(resolve(a:path_a), '/\+$', '', '')
+  let b = substitute(resolve(a:path_b), '/\+$', '', '')
+  return a ==# b
+endfunction
+
+" Directory of the worktree {ref} is checked out in, when it is not the one
+" this view belongs to.
+function! s:branch_worktree_text(state, ref) abort
+  let path = get(get(a:state, 'branch_worktrees', {}), a:ref.name, '')
+  if empty(path) || s:same_dir(path, a:state.root)
+    return ''
+  endif
+  return ' [' . fnamemodify(path, ':~') . ']'
+endfunction
+
 function! s:load_branches(state, select_name, ...) abort
   let OnDone = a:0 ? a:1 : 0
   let token = get(a:state, 'branch_req', 0) + 1
   let a:state.branch_req = token
   call s:git_job(a:state, 'branches', 'branch_req', token,
         \ ['for-each-ref', '--sort=-committerdate',
-        \  '--format=%(HEAD)%09%(refname)%09%(refname:short)%09%(symref)',
+        \  '--format=%(HEAD)%09%(refname)%09%(refname:short)'
+        \  . '%09%(symref)%09%(upstream:track)',
         \  'refs/heads', 'refs/remotes', 'refs/tags'],
         \ function('s:apply_branches', [a:state, a:select_name, OnDone]))
+  call s:git_job(a:state, 'branches-worktrees', 'branch_req', token,
+        \ ['worktree', 'list', '--porcelain'],
+        \ function('s:apply_worktrees', [a:state]))
+endfunction
+
+" Map each checked-out branch to its worktree directory.
+function! s:apply_worktrees(state, result) abort
+  let worktrees = {}
+  let path = ''
+  for line in a:result.out
+    if stridx(line, 'worktree ') == 0
+      let path = strpart(line, 9)
+    elseif stridx(line, 'branch refs/heads/') == 0 && !empty(path)
+      let worktrees[strpart(line, 18)] = path
+    elseif empty(line)
+      let path = ''
+    endif
+  endfor
+
+  call s:update_branch_worktrees(a:state, worktrees)
+endfunction
+
+" Keep the worktree directories in sync without losing the selected branch.
+function! s:update_branch_worktrees(state, worktrees) abort
+  if get(a:state, 'branch_worktrees', {}) ==# a:worktrees
+    return
+  endif
+  let a:state.branch_worktrees = a:worktrees
+  if empty(get(a:state, 'refs', []))
+    return
+  endif
+
+  let keep = ''
+  if a:state.branch_index >= 0 && a:state.branch_index < len(a:state.branches)
+    let keep = a:state.branches[a:state.branch_index].name
+  endif
+  call s:render_branches(a:state, keep)
 endfunction
 
 function! s:apply_branches(state, select_name, on_done, result) abort
@@ -2607,11 +2689,15 @@ function! s:apply_branches(state, select_name, on_done, result) abort
     if empty(name)
       continue
     endif
+    let [ahead, behind, gone] = s:parse_upstream_track(get(parts, 4, ''))
     call add(refs, {
           \ 'name': name,
           \ 'kind': refname =~# '^refs/remotes/' ? 'remote'
           \       : refname =~# '^refs/tags/' ? 'tag' : 'local',
           \ 'current': parts[0] ==# '*',
+          \ 'ahead': ahead,
+          \ 'behind': behind,
+          \ 'gone': gone,
           \ })
   endfor
   let a:state.refs = refs
@@ -2672,14 +2758,16 @@ function! s:render_branches(state, wanted) abort
           \     . km.checkout_branch . ':checkout '
           \     . km.merge_branch . ':merge ' . km.merge_abort . ':abort',
           \ '# ' . km.branch_delete . ':delete ' . km.copy_branch
-          \     . ':copy ?:hide',
+          \     . ':copy ' . km.worktree . ':worktree ?:hide',
           \ ])
   endif
   let a:state.branch_header = len(header)
 
   let lines = copy(header)
   for branch in branches
-    call add(lines, (branch.current ? '* ' : '  ') . branch.name)
+    call add(lines, (branch.current ? '* ' : '  ') . branch.name
+          \ . s:branch_sync_text(branch)
+          \ . s:branch_worktree_text(a:state, branch))
   endfor
   if empty(branches)
     call add(lines, '  (no ' . s:branch_kind_noun(kind) . ')')
@@ -3060,6 +3148,21 @@ function! s:parse_worktree_status(lines) abort
   return files
 endfunction
 
+" Header line for a [staged, unstaged, untracked] summary, or '' when the
+" counts are not known yet.
+function! s:worktree_status_line(counts) abort
+  if empty(a:counts)
+    return ''
+  endif
+
+  let [staged, unstaged, untracked] = a:counts
+  if staged + unstaged + untracked == 0
+    return '# Working tree clean'
+  endif
+  return printf('# Staged %d  Unstaged %d  Untracked %d',
+        \ staged, unstaged, untracked)
+endfunction
+
 function! s:worktree_summary(files) abort
   let staged = 0
   let unstaged = 0
@@ -3099,13 +3202,7 @@ function! s:files_header_lines(state, entry) abort
     if empty(counts)
       let counts = s:worktree_summary(a:state.files)
     endif
-    let [staged, unstaged, untracked] = counts
-    if staged + unstaged + untracked == 0
-      call add(lines, '# Working tree clean')
-    else
-      call add(lines, printf('# Staged %d  Unstaged %d  Untracked %d',
-            \ staged, unstaged, untracked))
-    endif
+    call add(lines, s:worktree_status_line(counts))
     if a:state.show_help
       call add(lines, '# s:stage u:unstage -:toggle S/U:all t:tree')
       call add(lines, '# r:refresh d:discard o:open gd:diff ?:hide')
@@ -4371,6 +4468,7 @@ function! s:new_state(root, parsed, id) abort
         \ 'branches': [],
         \ 'refs': [],
         \ 'branch_kind': 'local',
+        \ 'branch_worktrees': {},
         \ 'branch_index': -1,
         \ 'branch_header': 2,
         \ 'files_buf': -1,
@@ -4474,9 +4572,9 @@ endfunction
 function! s:layout_heights() abort
   let total_left = max([12, &lines - 4])
   let branch_height = max([6, min([
-        \ s:opt_int('git_changes_branches_height', 8), total_left / 4])])
+        \ s:opt_int('git_changes_branches_height', 10), total_left / 4])])
   let commit_height = max([5, min([
-        \ s:opt_int('git_changes_commits_height', 12), total_left / 3])])
+        \ s:opt_int('git_changes_commits_height', 14), total_left / 3])])
   if total_left - branch_height - commit_height < 4
     let commit_height = max([4, total_left - branch_height - 4])
   endif

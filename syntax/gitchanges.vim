@@ -26,8 +26,12 @@ syntax match GitChangesHash       /^..\zs\x\{7,40\}\ze\s/
 syntax match GitChangesUnpushed   /^\zs↑/
 syntax match GitChangesMuted      /^\s\+([^)]*)$/
 syntax match GitChangesDir        /^\s*▾ .*\/$/
-syntax match GitChangesBranchCurrent /^\* \S\+$/
-syntax match GitChangesBranch        /^  \S\+$/
+syntax match GitChangesBranchCurrent /^\* \S\+\%( \%(↑\d\+\|↓\d\+\|✗\)\)*\%( \[[^\]]*\]\)\?$/ contains=GitChangesBranchAhead,GitChangesBranchBehind,GitChangesBranchGone,GitChangesBranchWorktree
+syntax match GitChangesBranch        /^  \S\+\%( \%(↑\d\+\|↓\d\+\|✗\)\)*\%( \[[^\]]*\]\)\?$/ contains=GitChangesBranchAhead,GitChangesBranchBehind,GitChangesBranchGone,GitChangesBranchWorktree
+syntax match GitChangesBranchAhead   /↑\d\+/ contained
+syntax match GitChangesBranchBehind  /↓\d\+/ contained
+syntax match GitChangesBranchGone    /✗/ contained
+syntax match GitChangesBranchWorktree /\[[^\]]*\]/ contained
 
 highlight default GitChangesHeader     ctermfg=Gray    guifg=#8a8a8a gui=italic
 highlight default link GitChangesStatus String
@@ -52,5 +56,9 @@ highlight default GitChangesMuted      ctermfg=Gray    guifg=#8a8a8a gui=italic
 highlight default link GitChangesDir Directory
 highlight default GitChangesBranchCurrent ctermfg=Green cterm=bold guifg=#5faf5f gui=bold
 highlight default GitChangesBranch        ctermfg=Cyan  guifg=#5fafd7
+highlight default GitChangesBranchAhead   ctermfg=Yellow cterm=bold guifg=#d7af5f gui=bold
+highlight default GitChangesBranchBehind  ctermfg=Yellow cterm=bold guifg=#d7af5f gui=bold
+highlight default GitChangesBranchGone    ctermfg=Red    cterm=bold guifg=#d75f5f gui=bold
+highlight default link GitChangesBranchWorktree GitChangesMuted
 
 let b:current_syntax = 'gitchanges'

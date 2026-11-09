@@ -235,6 +235,7 @@ set statusline+=%{GitChangesBlameLine()}
 | --- | --- |
 | `j` / `k` | 移动分支选择，不改变其他窗口 |
 | `<CR>` | 显示所选分支的 commit 和文件 |
+| `Esc` | 回到工作区改动 |
 | `]]` / `[[` | 在本地分支、远程分支和标签之间切换列表 |
 | `co` | checkout 所选分支 |
 | `M` | 把所选分支合并到当前分支 |
@@ -269,10 +270,10 @@ let g:git_changes_statusline_unstaged_interval = 1000
 let g:git_changes_blame_width = 40
 
 " commit 列表高度上限
-let g:git_changes_commits_height = 12
+let g:git_changes_commits_height = 14
 
 " 分支列表高度上限
-let g:git_changes_branches_height = 8
+let g:git_changes_branches_height = 10
 
 " 每页加载多少个 commit（按 L 加载下一批）
 let g:git_changes_max_commits = 200

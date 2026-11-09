@@ -241,6 +241,7 @@ open-file actions are unavailable.
 | --- | --- |
 | `j` / `k` | Move branch selection without changing the other panes |
 | `<CR>` | Show the selected branch's commits and files |
+| `Esc` | Go back to the working tree changes |
 | `]]` / `[[` | Switch the list between local branches, remote branches, and tags |
 | `co` | Check out the selected branch |
 | `M` | Merge the selected branch into the current branch |
@@ -289,10 +290,10 @@ let g:git_changes_statusline_unstaged_interval = 1000
 let g:git_changes_blame_width = 40
 
 " Commit list height limit
-let g:git_changes_commits_height = 12
+let g:git_changes_commits_height = 14
 
 " Branch list height limit
-let g:git_changes_branches_height = 8
+let g:git_changes_branches_height = 10
 
 " Commits loaded per page (press L to load the next batch)
 let g:git_changes_max_commits = 200

@@ -7,7 +7,10 @@ other="$(mktemp -d "${TMPDIR:-/tmp}/vim-git-changes-smoke-other.XXXXXX")"
 script="$(mktemp "${TMPDIR:-/tmp}/vim-git-changes-smoke-vim.XXXXXX")"
 out="$(mktemp -d "${TMPDIR:-/tmp}/vim-git-changes-smoke-out.XXXXXX")"
 
-cleanup() { rm -rf "$repo" "$other" "$script" "$out"; }
+cleanup() {
+  rm -rf "$repo" "$other" "$script" "$out"
+  if [ -n "${worktree:-}" ]; then rm -rf "$worktree"; fi
+}
 trap cleanup EXIT
 
 if [ -z "${VIM_BIN:-}" ]; then
@@ -49,7 +52,24 @@ git branch other "$other_commit"
 cur_branch=$(git rev-parse --abbrev-ref HEAD)
 git branch sametip HEAD
 git tag v1
-git update-ref refs/remotes/origin/main HEAD
+
+# Upstreams for the branch sync markers: the current branch is one commit
+# ahead of origin, lag is one commit behind, and stale's upstream is gone.
+git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+git config "branch.$cur_branch.remote" origin
+git config "branch.$cur_branch.merge" "refs/heads/$cur_branch"
+git update-ref "refs/remotes/origin/$cur_branch" "$(git rev-parse HEAD~1)"
+git branch lag HEAD~1
+git config branch.lag.remote origin
+git config branch.lag.merge refs/heads/lag
+git update-ref refs/remotes/origin/lag HEAD
+git branch stale HEAD
+git config branch.stale.remote origin
+git config branch.stale.merge refs/heads/stale
+
+# A linked worktree, so the branch list can show its directory.
+worktree="$(mktemp -d "${TMPDIR:-/tmp}/vim-git-changes-smoke-wt.XXXXXX")"
+git worktree add -q -b wtbranch "$worktree/wt" HEAD
 rm -f "$tmp_index"
 
 cat > "$script" <<'VIM'
@@ -73,6 +93,7 @@ function! WaitMain() abort
     if exists('t:git_changes') && !empty(t:git_changes)
       let st = t:git_changes
       if !has_key(st, 'job_commits-log') && !has_key(st, 'job_branches')
+            \ && !has_key(st, 'job_branches-worktrees')
             \ && !has_key(st, 'job_files') && !has_key(st, 'job_files-body')
         break
       endif
@@ -213,6 +234,22 @@ call Check('branches map [[', !empty(maparg('[[', 'n')), maparg('[[', 'n'))
 call Check('branches start on local',
       \ getbufline(st.branches_buf, 1) ==# ['# Branches'],
       \ string(getbufline(st.branches_buf, 1)))
+call Check('branches worktree dir',
+      \ match(getbufline(st.branches_buf, 1, '$'), '^  wtbranch \[') >= 0,
+      \ string(getbufline(st.branches_buf, 1, '$')))
+call Check('current branch has no worktree dir',
+      \ match(getbufline(st.branches_buf, 1, '$'), '^\* .*\[') < 0,
+      \ string(getbufline(st.branches_buf, 1, '$')))
+call Check('branches ahead status',
+      \ index(getbufline(st.branches_buf, 1, '$'),
+      \       '* ' . g:cur_branch . ' ↑1') > 0,
+      \ string(getbufline(st.branches_buf, 1, '$')))
+call Check('branches behind status',
+      \ index(getbufline(st.branches_buf, 1, '$'), '  lag ↓1') > 0,
+      \ string(getbufline(st.branches_buf, 1, '$')))
+call Check('branches gone status',
+      \ index(getbufline(st.branches_buf, 1, '$'), '  stale ✗') > 0,
+      \ string(getbufline(st.branches_buf, 1, '$')))
 normal ]]
 call Check(']] shows remote branches',
       \ getbufline(st.branches_buf, 1) ==# ['# Remote branches']
@@ -239,6 +276,17 @@ normal [[
 call Check('[[ back to local',
       \ getbufline(st.branches_buf, 1) ==# ['# Branches'],
       \ string(getbufline(st.branches_buf, 1)))
+
+" Esc returns to the working tree entry from the branch list.
+call Check('branches map Esc', !empty(maparg('<Esc>', 'n')), maparg('<Esc>', 'n'))
+call win_gotoid(st.commits_win)
+normal j
+call Check('commits cursor moved', st.commit_index == 1, st.commit_index)
+call win_gotoid(st.branches_win)
+execute "normal \<Esc>"
+call Check('branches Esc returns to worktree', st.commit_index == 0,
+      \ st.commit_index)
+call WaitMain()
 call win_gotoid(st.files_win)
 
 " Exercise the generated stage/unstage mapping arguments.
