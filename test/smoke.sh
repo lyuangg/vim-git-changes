@@ -210,6 +210,20 @@ call Check('main refresh key',
       \ st.commit_index == before_commit && len(st.files) == 2,
       \ 'commit=' . st.commit_index . ' files=' . len(st.files))
 
+" The diff panes refresh with r as well.
+for win in [st.old_win, st.new_win]
+  call win_gotoid(win)
+  call Check('diff pane map refresh', !empty(maparg('r', 'n')), maparg('r', 'n'))
+endfor
+call win_gotoid(st.new_win)
+let before_commit = st.commit_index
+normal r
+sleep 300m
+call Check('diff pane refresh key',
+      \ st.commit_index == before_commit && len(st.files) == 2,
+      \ 'commit=' . st.commit_index . ' files=' . len(st.files))
+call win_gotoid(st.files_win)
+
 " statusline text should be set for the files pane
 let pane_sl = getwinvar(st.files_win, '&statusline')
 call Check('pane statusline', pane_sl =~# 'Files', pane_sl)

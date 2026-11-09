@@ -203,7 +203,7 @@ open-file actions are unavailable.
 | `t` | Toggle list/tree view |
 | `?` | Show/hide help |
 | `Esc` | Go back to the working tree changes |
-| `r` | Refresh files, commits, and branches |
+| `r` | Refresh files, commits, and branches (also in diff panes) |
 | `s` | Stage file |
 | `u` | Unstage file |
 | `S` | Stage all working tree changes (including untracked files) |

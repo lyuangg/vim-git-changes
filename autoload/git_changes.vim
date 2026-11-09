@@ -827,6 +827,7 @@ function! s:init_diff_buffer(state, side) abort
   let b:gc_kind = 'diff'
   let b:gc_side = a:side
   call s:setup_diff_window()
+  call s:map_action('refresh', 'refresh_all')
   call s:map_action('open_file', 'open_file')
   call s:map_action('diff_file', 'open_file_diff_for_current')
   call s:map_action('stage', 'stage_current', '"stage"')

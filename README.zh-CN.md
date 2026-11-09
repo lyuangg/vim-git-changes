@@ -197,7 +197,7 @@ set statusline+=%{GitChangesBlameLine()}
 | `t` | 列表 / tree 样式切换 |
 | `?` | 显示 / 隐藏帮助 |
 | `Esc` | 回到工作区改动 |
-| `r` | 刷新文件、commit 和分支 |
+| `r` | 刷新文件、commit 和分支（在 diff 面板里也可用） |
 | `s` | stage 文件 |
 | `u` | unstage 文件 |
 | `S` | stage 所有工作区改动（包括未跟踪文件） |
