@@ -235,6 +235,7 @@ set statusline+=%{GitChangesBlameLine()}
 | --- | --- |
 | `j` / `k` | 移动分支选择，不改变其他窗口 |
 | `<CR>` | 显示所选分支的 commit 和文件 |
+| `]]` / `[[` | 在本地分支、远程分支和标签之间切换列表 |
 | `co` | checkout 所选分支 |
 | `M` | 把所选分支合并到当前分支 |
 | `A` | 撤销正在进行的合并 |
@@ -356,6 +357,8 @@ let g:git_changes_keymaps = {
 | `copy_file` | `yy` |
 | `copy_commit` | `yy` |
 | `copy_branch` | `yy` |
+| `branch_group_next` | `]]` |
+| `branch_group_prev` | `[[` |
 | `edit_message` | `e` |
 | `load_more` | `L` |
 | `commit` | `cc` |

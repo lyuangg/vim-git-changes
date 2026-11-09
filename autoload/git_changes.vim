@@ -684,6 +684,8 @@ function! s:default_keymaps() abort
         \ 'copy_file': 'yy',
         \ 'copy_commit': 'yy',
         \ 'copy_branch': 'yy',
+        \ 'branch_group_next': ']]',
+        \ 'branch_group_prev': '[[',
         \ 'edit_message': 'e',
         \ 'load_more': 'L',
         \ 'commit': 'cc',
@@ -912,6 +914,8 @@ function! s:init_branch_buffer(state) abort
   call s:map_open_main()
   call s:map_action('branch_delete', 'delete_branch')
   call s:map_action('copy_branch', 'copy_branch_name')
+  call s:map_action('branch_group_next', 'cycle_branch_kind', 1)
+  call s:map_action('branch_group_prev', 'cycle_branch_kind', -1)
   call s:map_quit()
 
   augroup git_changes
@@ -2561,42 +2565,83 @@ function! s:unstage_all() abort
 endfunction
 
 
+" Ref groups shown in the branch list, in the order ]]/[[ cycle through.
+function! s:branch_kinds() abort
+  return ['local', 'remote', 'tag']
+endfunction
+
+function! s:branch_kind_title(kind) abort
+  if a:kind ==# 'remote'
+    return 'Remote branches'
+  elseif a:kind ==# 'tag'
+    return 'Tags'
+  endif
+  return 'Branches'
+endfunction
+
+function! s:branch_kind_noun(kind) abort
+  return a:kind ==# 'remote' ? 'remote branches'
+        \ : a:kind ==# 'tag' ? 'tags' : 'branches'
+endfunction
+
 function! s:load_branches(state, select_name, ...) abort
   let OnDone = a:0 ? a:1 : 0
   let token = get(a:state, 'branch_req', 0) + 1
   let a:state.branch_req = token
   call s:git_job(a:state, 'branches', 'branch_req', token,
         \ ['for-each-ref', '--sort=-committerdate',
-        \  '--format=%(HEAD)%09%(refname:short)', 'refs/heads'],
+        \  '--format=%(HEAD)%09%(refname)%09%(refname:short)%09%(symref)',
+        \  'refs/heads', 'refs/remotes', 'refs/tags'],
         \ function('s:apply_branches', [a:state, a:select_name, OnDone]))
 endfunction
 
 function! s:apply_branches(state, select_name, on_done, result) abort
-  let branches = []
+  let refs = []
   for line in a:result.out
-    let tab = stridx(line, "\t")
-    if tab < 0
+    let parts = split(line, "\t", 1)
+    if len(parts) < 3 || !empty(get(parts, 3, ''))
       continue
     endif
-    let name = strpart(line, tab + 1)
+    let refname = parts[1]
+    let name = parts[2]
     if empty(name)
       continue
     endif
-    call add(branches, {
+    call add(refs, {
           \ 'name': name,
-          \ 'current': strpart(line, 0, tab) ==# '*',
+          \ 'kind': refname =~# '^refs/remotes/' ? 'remote'
+          \       : refname =~# '^refs/tags/' ? 'tag' : 'local',
+          \ 'current': parts[0] ==# '*',
           \ })
   endfor
+  let a:state.refs = refs
 
   let old_name = ''
   if a:state.branch_index >= 0 && a:state.branch_index < len(a:state.branches)
     let old_name = a:state.branches[a:state.branch_index].name
   endif
-  let wanted = !empty(a:select_name) ? a:select_name : old_name
+  call s:render_branches(a:state,
+        \ !empty(a:select_name) ? a:select_name : old_name)
+
+  if type(a:on_done) == type(function('tr'))
+    call a:on_done()
+  endif
+endfunction
+
+" Draw the refs of {state.branch_kind}, selecting {wanted} when present.
+function! s:render_branches(state, wanted) abort
+  let kind = get(a:state, 'branch_kind', 'local')
+  let branches = []
+  for ref in get(a:state, 'refs', [])
+    if ref.kind ==# kind
+      call add(branches, ref)
+    endif
+  endfor
+  let a:state.branches = branches
 
   let selected = -1
   for i in range(len(branches))
-    if branches[i].name ==# wanted
+    if branches[i].name ==# a:wanted
       let selected = i
       break
     endif
@@ -2612,12 +2657,15 @@ function! s:apply_branches(state, select_name, on_done, result) abort
   if selected < 0 && !empty(branches)
     let selected = 0
   endif
+  let a:state.branch_index = selected
 
-  let header = ['# Branches']
+  let header = ['# ' . s:branch_kind_title(kind)]
   if get(a:state, 'branch_show_help', 0)
     let km = s:keymaps()
     call extend(header, [
           \ '# j/k:select Enter:show 1/2/3/4 ]c/[c:hunk Tab/S-Tab',
+          \ '# ' . km.branch_group_next . '/'
+          \     . km.branch_group_prev . ':groups',
           \ '# ' . km.new_branch . ':new ' . km.commit . ':commit '
           \     . km.commit_editor . ':edit',
           \ '# ' . km.pull . ':pull ' . km.push . ':push '
@@ -2628,15 +2676,13 @@ function! s:apply_branches(state, select_name, on_done, result) abort
           \ ])
   endif
   let a:state.branch_header = len(header)
-  let a:state.branches = branches
-  let a:state.branch_index = selected
 
   let lines = copy(header)
   for branch in branches
     call add(lines, (branch.current ? '* ' : '  ') . branch.name)
   endfor
   if empty(branches)
-    call add(lines, '  (no branches)')
+    call add(lines, '  (no ' . s:branch_kind_noun(kind) . ')')
   endif
 
   call s:set_lines(a:state.branches_buf, lines)
@@ -2645,10 +2691,32 @@ function! s:apply_branches(state, select_name, on_done, result) abort
           \ a:state.branch_header + 1 + selected)
   endif
   call s:update_statusline(a:state)
+endfunction
 
-  if type(a:on_done) == type(function('tr'))
-    call a:on_done()
+" Switch the branch list to the next/previous ref group.
+function! s:cycle_branch_kind(delta) abort
+  let state = s:cur_state()
+  if empty(state)
+    return
   endif
+
+  let kinds = s:branch_kinds()
+  let index = index(kinds, get(state, 'branch_kind', 'local'))
+  if index < 0
+    let index = 0
+  endif
+  let next = (index + a:delta) % len(kinds)
+  if next < 0
+    let next += len(kinds)
+  endif
+
+  let state.branch_kind = kinds[next]
+  let state.branch_index = -1
+  if empty(get(state, 'refs', []))
+    call s:load_branches(state, '')
+    return
+  endif
+  call s:render_branches(state, '')
 endfunction
 
 function! s:selected_branch(state) abort
@@ -2871,6 +2939,10 @@ function! s:delete_branch() abort
   endif
   if branch.current
     call s:err('cannot delete the current branch')
+    return
+  endif
+  if get(branch, 'kind', 'local') !=# 'local'
+    call s:err('only local branches can be deleted')
     return
   endif
 
@@ -4297,6 +4369,8 @@ function! s:new_state(root, parsed, id) abort
         \ 'display_file_indexes': [],
         \ 'file_index_by_path': {},
         \ 'branches': [],
+        \ 'refs': [],
+        \ 'branch_kind': 'local',
         \ 'branch_index': -1,
         \ 'branch_header': 2,
         \ 'files_buf': -1,

@@ -48,6 +48,8 @@ other_commit=$(printf 'other branch\n' | git commit-tree "$tree" -p HEAD)
 git branch other "$other_commit"
 cur_branch=$(git rev-parse --abbrev-ref HEAD)
 git branch sametip HEAD
+git tag v1
+git update-ref refs/remotes/origin/main HEAD
 rm -f "$tmp_index"
 
 cat > "$script" <<'VIM'
@@ -202,6 +204,41 @@ call win_gotoid(st.new_win)
 normal 3
 call Check('diff key 3 jumps to branches', win_getid() == st.branches_win,
       \ string(win_getid()) . ' branches=' . st.branches_win)
+call win_gotoid(st.files_win)
+
+" ]]/[[ cycle the branch list through local, remote, and tag refs.
+call win_gotoid(st.branches_win)
+call Check('branches map ]]', !empty(maparg(']]', 'n')), maparg(']]', 'n'))
+call Check('branches map [[', !empty(maparg('[[', 'n')), maparg('[[', 'n'))
+call Check('branches start on local',
+      \ getbufline(st.branches_buf, 1) ==# ['# Branches'],
+      \ string(getbufline(st.branches_buf, 1)))
+normal ]]
+call Check(']] shows remote branches',
+      \ getbufline(st.branches_buf, 1) ==# ['# Remote branches']
+      \ && index(getbufline(st.branches_buf, 1, '$'), '  origin/main') > 0,
+      \ string(getbufline(st.branches_buf, 1, '$')))
+normal ]]
+call Check(']] shows tags',
+      \ getbufline(st.branches_buf, 1) ==# ['# Tags']
+      \ && index(getbufline(st.branches_buf, 1, '$'), '  v1') > 0,
+      \ string(getbufline(st.branches_buf, 1, '$')))
+normal ]]
+call Check(']] wraps to local',
+      \ getbufline(st.branches_buf, 1) ==# ['# Branches'],
+      \ string(getbufline(st.branches_buf, 1)))
+normal [[
+call Check('[[ wraps to tags',
+      \ getbufline(st.branches_buf, 1) ==# ['# Tags'],
+      \ string(getbufline(st.branches_buf, 1)))
+normal [[
+call Check('[[ shows remote branches',
+      \ getbufline(st.branches_buf, 1) ==# ['# Remote branches'],
+      \ string(getbufline(st.branches_buf, 1)))
+normal [[
+call Check('[[ back to local',
+      \ getbufline(st.branches_buf, 1) ==# ['# Branches'],
+      \ string(getbufline(st.branches_buf, 1)))
 call win_gotoid(st.files_win)
 
 " Exercise the generated stage/unstage mapping arguments.

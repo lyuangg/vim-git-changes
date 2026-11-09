@@ -241,6 +241,7 @@ open-file actions are unavailable.
 | --- | --- |
 | `j` / `k` | Move branch selection without changing the other panes |
 | `<CR>` | Show the selected branch's commits and files |
+| `]]` / `[[` | Switch the list between local branches, remote branches, and tags |
 | `co` | Check out the selected branch |
 | `M` | Merge the selected branch into the current branch |
 | `A` | Abort an in-progress merge |
@@ -377,6 +378,8 @@ let g:git_changes_keymaps = {
 | `copy_file` | `yy` |
 | `copy_commit` | `yy` |
 | `copy_branch` | `yy` |
+| `branch_group_next` | `]]` |
+| `branch_group_prev` | `[[` |
 | `edit_message` | `e` |
 | `load_more` | `L` |
 | `commit` | `cc` |
