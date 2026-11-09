@@ -214,6 +214,32 @@ call Check('main refresh key',
 let pane_sl = getwinvar(st.files_win, '&statusline')
 call Check('pane statusline', pane_sl =~# 'Files', pane_sl)
 
+" ]c / [c move the diff cursor without leaving the files pane.
+call win_gotoid(st.files_win)
+call Check('files map ]c', !empty(maparg(']c', 'n')), maparg(']c', 'n'))
+call Check('files map [c', !empty(maparg('[c', 'n')), maparg('[c', 'n'))
+for i in range(50)
+  if !has_key(st, 'job_diff-old') && !has_key(st, 'job_diff-new')
+    break
+  endif
+  sleep 50m
+endfor
+call win_execute(st.new_win, 'silent! call cursor(1, 1)')
+normal ]c
+let hunk_next_line = 0
+call win_execute(st.new_win, 'let hunk_next_line = line(".")')
+call Check('files ]c jumps to next hunk', hunk_next_line > 1,
+      \ string(hunk_next_line))
+let hunk_last = len(getbufline(st.new_buf, 1, '$'))
+call win_execute(st.new_win, 'silent! normal! G')
+normal [c
+let hunk_prev_line = 0
+call win_execute(st.new_win, 'let hunk_prev_line = line(".")')
+call Check('files [c jumps to previous hunk',
+      \ hunk_prev_line > 1 && hunk_prev_line < hunk_last,
+      \ string(hunk_prev_line) . ' last=' . hunk_last)
+call win_gotoid(st.files_win)
+
 let v:errmsg = ''
 doautocmd VimResized
 call Check('resize main view', empty(v:errmsg), v:errmsg)

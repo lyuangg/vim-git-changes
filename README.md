@@ -197,6 +197,7 @@ open-file actions are unavailable.
 | --- | --- |
 | `j` / `k` | Move between files |
 | `J` / `K` | Scroll the diff |
+| `]c` / `[c` | Jump to the next / previous diff change |
 | `H` / `L` | Scroll the diff left / right |
 | `4` | Jump to the diff pane |
 | `t` | Toggle list/tree view |
@@ -366,6 +367,8 @@ let g:git_changes_keymaps = {
 | `staged_view` | `dS` |
 | `open_file` | `o` |
 | `diff_file` | `gd` |
+| `hunk_next` | `]c` |
+| `hunk_prev` | `[c` |
 | `copy_file` | `yy` |
 | `copy_commit` | `yy` |
 | `copy_branch` | `yy` |

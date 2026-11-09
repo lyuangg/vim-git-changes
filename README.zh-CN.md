@@ -191,6 +191,7 @@ set statusline+=%{GitChangesBlameLine()}
 | --- | --- |
 | `j` / `k` | 切换文件 |
 | `J` / `K` | 滚动 diff |
+| `]c` / `[c` | 跳到下一个 / 上一个 diff 改动 |
 | `H` / `L` | 左右滚动 diff |
 | `4` | 跳到 diff 窗口 |
 | `t` | 列表 / tree 样式切换 |
@@ -345,6 +346,8 @@ let g:git_changes_keymaps = {
 | `staged_view` | `dS` |
 | `open_file` | `o` |
 | `diff_file` | `gd` |
+| `hunk_next` | `]c` |
+| `hunk_prev` | `[c` |
 | `copy_file` | `yy` |
 | `copy_commit` | `yy` |
 | `copy_branch` | `yy` |

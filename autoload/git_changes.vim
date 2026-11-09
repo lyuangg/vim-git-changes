@@ -671,6 +671,8 @@ function! s:default_keymaps() abort
         \ 'pane_diff': '4',
         \ 'diff_left': 'H',
         \ 'diff_right': 'L',
+        \ 'hunk_next': ']c',
+        \ 'hunk_prev': '[c',
         \ 'quit': 'q',
         \ }
 endfunction
@@ -781,6 +783,8 @@ function! s:init_list_buffer(state, kind) abort
   call s:map_fixed_action('<Up>', 'move_cursor', -1)
   call s:map_fixed_action('J', 'scroll_diff', 1)
   call s:map_fixed_action('K', 'scroll_diff', -1)
+  call s:map_action('hunk_next', 'goto_diff_hunk', 1)
+  call s:map_action('hunk_prev', 'goto_diff_hunk', -1)
   call s:map_action('refresh', 'refresh_all')
   call s:map_action('cycle_next', 'cycle_pane', 1)
   call s:map_action('cycle_prev', 'cycle_pane', -1)
@@ -853,6 +857,8 @@ function! s:init_branch_buffer(state) abort
   call s:map_fixed_action('k', 'move_cursor', -1)
   call s:map_fixed_action('<Down>', 'move_cursor', 1)
   call s:map_fixed_action('<Up>', 'move_cursor', -1)
+  call s:map_action('hunk_next', 'goto_diff_hunk', 1)
+  call s:map_action('hunk_prev', 'goto_diff_hunk', -1)
   call s:map_action('refresh', 'refresh_all')
   call s:map_fixed_action('?', 'toggle_branch_help')
   call s:map_action('checkout_branch', 'checkout_branch')
@@ -1134,21 +1140,52 @@ function! s:goto_left_pane(index) abort
   endif
 endfunction
 
-" Jump to the right-hand diff pane. Prefer the new pane (the side users read
-" and act on), then the work pane shown for conflicts, then the old pane.
+" The diff pane that receives focus: the new pane (the side users read and
+" act on), then the work pane shown for conflicts, then the old pane.
+function! s:diff_pane_win(state) abort
+  for winid in [a:state.new_win, get(a:state, 'work_win', 0),
+        \ a:state.old_win]
+    if winid > 0 && s:win_exists(winid)
+      return winid
+    endif
+  endfor
+  return 0
+endfunction
+
 function! s:goto_diff_pane() abort
   let state = s:cur_state()
   if empty(state)
     return
   endif
 
-  let windows = [state.new_win, get(state, 'work_win', 0), state.old_win]
-  for winid in windows
-    if winid > 0 && win_id2win(winid) > 0
-      call win_gotoid(winid)
-      return
-    endif
-  endfor
+  let winid = s:diff_pane_win(state)
+  if winid > 0
+    call win_gotoid(winid)
+  endif
+endfunction
+
+" Move the diff panes to the next or previous change while the cursor stays in
+" the list pane.
+function! s:goto_diff_hunk(delta) abort
+  let state = s:cur_state()
+  if empty(state)
+    return
+  endif
+
+  let winid = s:diff_pane_win(state)
+  if winid <= 0
+    return
+  endif
+
+  let key = a:delta > 0 ? ']c' : '[c'
+  if exists('*win_execute')
+    call win_execute(winid, 'silent! normal! ' . key)
+  else
+    let curwin = win_getid()
+    call win_gotoid(winid)
+    execute 'silent! normal! ' . key
+    call win_gotoid(curwin)
+  endif
 endfunction
 
 " Jump back to the working tree changes from any commit or compare view.
@@ -2540,7 +2577,7 @@ function! s:apply_branches(state, select_name, on_done, result) abort
   if get(a:state, 'branch_show_help', 0)
     let km = s:keymaps()
     call extend(header, [
-          \ '# j/k:select Enter:show 1/2/3/4 Tab/S-Tab',
+          \ '# j/k:select Enter:show 1/2/3/4 ]c/[c:hunk Tab/S-Tab',
           \ '# ' . km.new_branch . ':new ' . km.commit . ':commit '
           \     . km.commit_editor . ':edit',
           \ '# ' . km.pull . ':pull ' . km.push . ':push '
@@ -2962,7 +2999,7 @@ function! s:files_header_lines(state, entry) abort
       call add(lines, '# r:refresh d:discard o:open gd:diff ?:hide')
       call add(lines, '# Esc:worktree yy:path cc:commit cb:new')
       call add(lines, '# C:edit p:pull P:push')
-      call add(lines, '# J/K:scroll 1/2/3/4:panes Tab/S-Tab')
+      call add(lines, '# J/K:scroll ]c/[c:hunk 1/2/3/4:panes Tab/S-Tab')
       call add(lines, '# H/L:scroll diff left/right')
     endif
   elseif a:entry.kind ==# 'compare'
@@ -2970,7 +3007,7 @@ function! s:files_header_lines(state, entry) abort
     if a:state.show_help
       call add(lines, '# t:tree r:refresh ?:hide yy:path Esc:worktree')
       call add(lines, '# cc:commit cb:new C:edit p:pull P:push')
-      call add(lines, '# J/K:scroll 1/2/3/4:panes Tab/S-Tab')
+      call add(lines, '# J/K:scroll ]c/[c:hunk 1/2/3/4:panes Tab/S-Tab')
       call add(lines, '# H/L:scroll diff left/right')
     endif
   else
@@ -2987,7 +3024,7 @@ function! s:files_header_lines(state, entry) abort
     if a:state.show_help
       call add(lines, '# t:tree r:refresh ?:hide yy:path Esc:worktree')
       call add(lines, '# cc:commit cb:new C:edit p:pull P:push')
-      call add(lines, '# J/K:scroll 1/2/3/4:panes Tab/S-Tab')
+      call add(lines, '# J/K:scroll ]c/[c:hunk 1/2/3/4:panes Tab/S-Tab')
       call add(lines, '# H/L:scroll diff left/right')
     endif
   endif
