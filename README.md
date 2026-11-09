@@ -200,6 +200,7 @@ open-file actions are unavailable.
 | `]c` / `[c` | Jump to the next / previous diff change |
 | `H` / `L` | Scroll the diff left / right |
 | `4` | Jump to the diff pane |
+| `0` | Jump to the status pane |
 | `t` | Toggle list/tree view |
 | `?` | Show/hide help |
 | `Esc` | Go back to the working tree changes |
@@ -251,6 +252,22 @@ open-file actions are unavailable.
 | `yy` | Copy the branch name |
 | `?` | Show/hide help (hidden by default) |
 
+### Status pane
+
+| Key | Action |
+| --- | --- |
+| `q` | Close the GitChanges tab |
+| `cc` / `C` | Commit, or commit with an editor |
+| `co` / `M` | Check out or merge a branch |
+| `cn` | Create a new branch |
+| `p` / `P` | Pull / push |
+| `Esc` | Go back to the working tree changes |
+| `0` | Jump to the status pane (from any pane) |
+| `1` / `2` / `3` / `4` | Jump to the files / commits / branches / diff pane |
+
+The default bar uses a dark slate background with light text; see
+`g:git_changes_statusline_colors` below to change it.
+
 ### Status messages
 
 Refresh, pull, and push show progress in the Vim command line (the message area
@@ -294,6 +311,17 @@ let g:git_changes_commits_height = 14
 
 " Branch list height limit
 let g:git_changes_branches_height = 10
+
+" Height of the status pane below the diff panes
+let g:git_changes_status_height = 6
+
+" Statusline bar colors for the GitChanges panes. Each value can be a cterm
+" color number/name, a GUI hex string, or a dict with both.
+let g:git_changes_statusline_colors = {
+      \ 'bg': {'cterm': '236', 'gui': '#2f3b4a'},
+      \ 'fg': {'cterm': '253', 'gui': '#d8dee9'},
+      \ 'accent': {'cterm': '221', 'gui': '#ffd75f'},
+      \ }
 
 " Commits loaded per page (press L to load the next batch)
 let g:git_changes_max_commits = 200
@@ -401,4 +429,5 @@ let g:git_changes_keymaps = {
 | `pane_commits` | `2` |
 | `pane_branches` | `3` |
 | `pane_diff` | `4` |
+| `pane_status` | `0` |
 | `quit` | `q` |

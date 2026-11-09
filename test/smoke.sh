@@ -192,6 +192,32 @@ call Check('main commits loaded', len(st.commits) >= 2, len(st.commits))
 call Check('main files loaded', len(st.files) == 2,
       \ len(st.files) . ' [' . join(map(copy(st.files), 'v:val.path'), ',') . ']')
 
+" --- status pane ----------------------------------------------------------
+" The status pane is six lines high, numbered 0 in its statusline, and
+" describes the current selection.
+call Check('status window exists',
+      \ getwininfo(st.status_win)[0].height == 6,
+      \ string(getwininfo(st.status_win)[0].height))
+let status_sl = getwinvar(st.status_win, '&statusline')
+call Check('status statusline', status_sl =~# 'Status'
+      \ && stridx(status_sl, st.root) >= 0,
+      \ status_sl)
+let status_lines = getbufline(st.status_buf, 1, '$')
+call Check('status worktree detail',
+      \ index(status_lines, '# WORK  Working tree changes') >= 0
+      \ && match(status_lines, '^# Branch: ') >= 0,
+      \ string(status_lines))
+
+call win_gotoid(st.files_win)
+normal 0
+call Check('status key 0 jumps', win_getid() == st.status_win,
+      \ string(win_getid()) . ' status=' . st.status_win)
+let status_maps = ['q', 'cc', 'co', 'cn', 'C', 'M', '<Esc>', 'p', 'P']
+call Check('status keymaps',
+      \ empty(filter(copy(status_maps), 'empty(maparg(v:val, "n"))')),
+      \ string(filter(copy(status_maps), 'empty(maparg(v:val, "n"))')))
+call win_gotoid(st.files_win)
+
 let commit_lines = filter(getbufline(st.commits_buf, 1, '$'),
       \ 'v:val =~# "second$"')
 call Check('commit list author column',
@@ -277,11 +303,43 @@ call Check('[[ back to local',
       \ getbufline(st.branches_buf, 1) ==# ['# Branches'],
       \ string(getbufline(st.branches_buf, 1)))
 
+" The status pane follows the branch list, including remote branches.
+call Check('status branch detail',
+      \ match(getbufline(st.status_buf, 1, '$'),
+      \       '^# Branch: \|^# Remote branch: ') >= 0,
+      \ string(getbufline(st.status_buf, 1, '$')))
+normal ]]
+call Check('status remote branch detail',
+      \ match(getbufline(st.status_buf, 1, '$'),
+      \       '^# Remote branch: origin/') >= 0,
+      \ string(getbufline(st.status_buf, 1, '$')))
+normal [[
+
 " Esc returns to the working tree entry from the branch list.
 call Check('branches map Esc', !empty(maparg('<Esc>', 'n')), maparg('<Esc>', 'n'))
 call win_gotoid(st.commits_win)
 normal j
 call Check('commits cursor moved', st.commit_index == 1, st.commit_index)
+
+" The status pane follows the commit selection, and the files pane no longer
+" repeats the commit message.
+for i in range(100)
+  if st.commit_index == 1 && !empty(st.files) && !has_key(st, 'job_files')
+    break
+  endif
+  sleep 50m
+endfor
+let commit_status = getbufline(st.status_buf, 1, '$')
+call Check('status commit detail',
+      \ match(commit_status, '^# commit \x\+$') >= 0
+      \ && match(commit_status, '^# Author: smoke') >= 0
+      \ && match(commit_status, '^# Subject: second$') >= 0,
+      \ string(commit_status))
+let files_head = getbufline(st.files_buf, 1, st.files_header)
+call Check('files header hides commit message',
+      \ match(files_head, 'Author\|Subject\|Date') < 0,
+      \ string(files_head))
+
 call win_gotoid(st.branches_win)
 execute "normal \<Esc>"
 call Check('branches Esc returns to worktree', st.commit_index == 0,
@@ -503,6 +561,28 @@ call Check('filediff new u untouched', empty(maparg('u', 'n')), maparg('u', 'n')
 
 execute 'GitChangesDiffQuit'
 call Check('filediff quit', !exists('t:git_changes_file_diff'), 'tab still open')
+
+" --- custom statusline colors ---------------------------------------------
+let g:git_changes_statusline_colors = {
+      \ 'bg': {'cterm': '236', 'gui': '#2f3b4a'},
+      \ 'fg': {'cterm': '253', 'gui': '#d8dee9'},
+      \ 'accent': {'cterm': '221', 'gui': '#ffd75f'},
+      \ }
+GitChanges
+call WaitMain()
+let cs = t:git_changes
+call Check('custom bar colors',
+      \ synIDattr(hlID('GitChangesPaneBar'), 'bg', 'cterm') ==# '236'
+      \ && synIDattr(hlID('GitChangesPaneBar'), 'bg#', 'gui') ==# '#2f3b4a'
+      \ && synIDattr(hlID('GitChangesPaneBar'), 'fg', 'cterm') ==# '253'
+      \ && synIDattr(hlID('GitChangesPaneBar'), 'fg#', 'gui') ==# '#d8dee9',
+      \ string([synIDattr(hlID('GitChangesPaneBar'), 'bg', 'cterm'),
+      \         synIDattr(hlID('GitChangesPaneBar'), 'fg', 'cterm')]))
+call Check('custom bar accent',
+      \ synIDattr(hlID('GitChangesPaneBarIndex'), 'fg', 'cterm') ==# '221'
+      \ && synIDattr(hlID('GitChangesPaneBarIndex'), 'fg#', 'gui') ==# '#ffd75f',
+      \ string(synIDattr(hlID('GitChangesPaneBarIndex'), 'fg', 'cterm')))
+GitChangesQuit
 
 " --- repository root follows the buffer, not cwd ---------------------------
 execute 'cd ' . fnameescape(g:other)

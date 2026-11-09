@@ -194,6 +194,7 @@ set statusline+=%{GitChangesBlameLine()}
 | `]c` / `[c` | 跳到下一个 / 上一个 diff 改动 |
 | `H` / `L` | 左右滚动 diff |
 | `4` | 跳到 diff 窗口 |
+| `0` | 跳到状态窗口 |
 | `t` | 列表 / tree 样式切换 |
 | `?` | 显示 / 隐藏帮助 |
 | `Esc` | 回到工作区改动 |
@@ -245,6 +246,21 @@ set statusline+=%{GitChangesBlameLine()}
 | `yy` | 复制分支名 |
 | `?` | 显示 / 隐藏帮助（默认隐藏） |
 
+### 状态窗口
+
+| 按键 | 操作 |
+| --- | --- |
+| `q` | 关闭 GitChanges tab |
+| `cc` / `C` | 提交，或用编辑器提交 |
+| `co` / `M` | 切换或合并分支 |
+| `cn` | 新建分支 |
+| `p` / `P` | pull / push |
+| `Esc` | 回到工作区改动 |
+| `0` | 跳到状态窗口（任意窗口可用） |
+| `1` / `2` / `3` / `4` | 跳到文件 / commit / 分支 / diff 窗口 |
+
+默认是深色背景配浅色文字；可用下面的 `g:git_changes_statusline_colors` 修改。
+
 ## 配置
 
 ```vim
@@ -274,6 +290,17 @@ let g:git_changes_commits_height = 14
 
 " 分支列表高度上限
 let g:git_changes_branches_height = 10
+
+" diff 窗口下方状态窗口的高度
+let g:git_changes_status_height = 6
+
+" GitChanges 各窗口状态栏的颜色。每个值可以是 cterm 颜色编号/名称、GUI 十六
+" 进制颜色，或者同时包含两者的字典。
+let g:git_changes_statusline_colors = {
+      \ 'bg': {'cterm': '236', 'gui': '#2f3b4a'},
+      \ 'fg': {'cterm': '253', 'gui': '#d8dee9'},
+      \ 'accent': {'cterm': '221', 'gui': '#ffd75f'},
+      \ }
 
 " 每页加载多少个 commit（按 L 加载下一批）
 let g:git_changes_max_commits = 200
@@ -380,4 +407,5 @@ let g:git_changes_keymaps = {
 | `pane_commits` | `2` |
 | `pane_branches` | `3` |
 | `pane_diff` | `4` |
+| `pane_status` | `0` |
 | `quit` | `q` |

@@ -9,44 +9,153 @@ function! s:err(msg) abort
   echohl None
 endfunction
 
-" Statusline groups on purpose set no background color, so the GitChanges
-" panes blend with the window instead of drawing a colored bar. Foreground
-" colors are copied from the colorscheme when the first statusline is drawn.
-let s:statusline_hl_ready = 0
-
-function! s:define_no_bg_group(group, source, attrs) abort
-  if hlexists(a:group)
-    return
-  endif
-
-  let guifg = synIDattr(synIDtrans(hlID(a:source)), 'fg#', 'gui')
-  let ctermfg = synIDattr(synIDtrans(hlID(a:source)), 'fg', 'cterm')
-  let parts = []
-  if !empty(a:attrs)
-    call add(parts, 'term=' . a:attrs)
-    call add(parts, 'cterm=' . a:attrs)
-    call add(parts, 'gui=' . a:attrs)
-  endif
-  if !empty(guifg)
-    call add(parts, 'guifg=' . guifg)
-  endif
-  if !empty(ctermfg)
-    call add(parts, 'ctermfg=' . ctermfg)
-  endif
-  call add(parts, 'ctermbg=NONE')
-  call add(parts, 'guibg=NONE')
-  execute 'highlight ' . a:group . ' ' . join(parts, ' ')
+" Statusline groups are created from the colorscheme (or user overrides) the
+" first time a pane statusline is drawn, and rebuilt if the configuration
+" changes at runtime.
+function! s:init_statusline_highlights() abort
+  call s:init_pane_bar_highlights()
 endfunction
 
-function! s:init_statusline_highlights() abort
-  if s:statusline_hl_ready
+" True when a color reads as a light background. Uses the GUI hex value when
+" available, otherwise approximates the 256-color palette, and falls back to
+" 'background'.
+function! s:color_is_light(guicolor, ctermcolor) abort
+  let hex = tolower(a:guicolor)
+  if hex =~# '^#\x\{6}$'
+    let r = str2nr(strpart(hex, 1, 2), 16)
+    let g = str2nr(strpart(hex, 3, 2), 16)
+    let b = str2nr(strpart(hex, 5, 2), 16)
+    return 299 * r + 587 * g + 114 * b > 120000
+  endif
+
+  if a:ctermcolor =~# '^\d\+$'
+    return s:cterm_color_is_light(str2nr(a:ctermcolor))
+  endif
+
+  if a:guicolor =~? 'white\|grey\|gray\|light\|yellow\|cyan'
+    return 1
+  endif
+  return &background ==# 'light'
+endfunction
+
+function! s:cterm_color_is_light(index) abort
+  if a:index < 16
+    " Approximate RGB values for the 16 ANSI colors.
+    let palette = [
+          \ [0, 0, 0], [128, 0, 0], [0, 128, 0], [128, 128, 0],
+          \ [0, 0, 128], [128, 0, 128], [0, 128, 128], [192, 192, 192],
+          \ [128, 128, 128], [255, 0, 0], [0, 255, 0], [255, 255, 0],
+          \ [0, 0, 255], [255, 0, 255], [0, 255, 255], [255, 255, 255],
+          \ ]
+    let [r, g, b] = palette[a:index]
+    return 299 * r + 587 * g + 114 * b > 120000
+  elseif a:index < 232
+    let cube = [0, 95, 135, 175, 215, 255]
+    let i = a:index - 16
+    let r = cube[(i / 36) % 6]
+    let g = cube[(i / 6) % 6]
+    let b = cube[i % 6]
+    return 299 * r + 587 * g + 114 * b > 120000
+  endif
+  " 232-255 is the grayscale ramp, from near-black to near-white.
+  return 8 + (a:index - 232) * 10 > 120
+endfunction
+
+" Accept a color as {'cterm': ..., 'gui': ...}, a Number, or a String. Plain
+" numbers only apply to cterm and hex strings only apply to the GUI; anything
+" else is used in both.
+function! s:color_pair(value, default) abort
+  if type(a:value) == type({})
+    let cterm = get(a:value, 'cterm', a:default[0])
+    let gui = get(a:value, 'gui', a:default[1])
+    return [empty(cterm) ? a:default[0] : cterm,
+          \ empty(gui) ? a:default[1] : gui]
+  elseif type(a:value) == type(0)
+    return [string(a:value), a:default[1]]
+  elseif type(a:value) == type('') && !empty(a:value)
+    if a:value =~# '^\d\+$'
+      return [a:value, a:default[1]]
+    elseif a:value =~? '^#\x\{6}$'
+      return [a:default[0], a:value]
+    endif
+    return [a:value, a:value]
+  endif
+  return a:default
+endfunction
+
+" All GitChanges panes share one colored statusline bar. The default is a
+" dark slate background with light text; g:git_changes_statusline_colors can
+" override any of the colors. Using the same bar everywhere keeps the layout
+" visually coherent.
+function! s:init_pane_bar_highlights() abort
+  let user = get(g:, 'git_changes_statusline_colors', {})
+  if type(user) != type({})
+    let user = {}
+  endif
+
+  " Rebuild when the configuration changes, so colors can be adjusted at
+  " runtime without restarting Vim.
+  let signature = string(user)
+  if hlexists('GitChangesPaneBar') && get(s:, 'pane_bar_sig', '') ==# signature
     return
   endif
-  let s:statusline_hl_ready = 1
-  call s:define_no_bg_group('GitChangesPaneStatus', 'Normal', '')
-  call s:define_no_bg_group('GitChangesPaneIndex', 'Title', '')
-  call s:define_no_bg_group('GitChangesPaneName', 'Title', 'bold')
-  call s:define_no_bg_group('GitChangesPaneInfo', 'Comment', '')
+  let s:pane_bar_sig = signature
+
+  " Default: dark slate bar with light text.
+  let attrs = {'fg#': '#d8dee9', 'fg': '253',
+        \ 'bg#': '#2b3a4a', 'bg': '236'}
+
+  if has_key(user, 'bg')
+    let pair = s:color_pair(user.bg, [attrs.bg, attrs['bg#']])
+    let attrs.bg = pair[0]
+    let attrs['bg#'] = pair[1]
+    " With a custom background keep the detail text readable unless the user
+    " also chose a foreground.
+    if !has_key(user, 'fg')
+      if s:color_is_light(attrs['bg#'], attrs.bg)
+        let attrs.fg = '234'
+        let attrs['fg#'] = '#1c1c1c'
+      else
+        let attrs.fg = '253'
+        let attrs['fg#'] = '#e5e9f0'
+      endif
+    endif
+  endif
+  if has_key(user, 'fg')
+    let pair = s:color_pair(user.fg, [attrs.fg, attrs['fg#']])
+    let attrs.fg = pair[0]
+    let attrs['fg#'] = pair[1]
+  endif
+
+  " The leading text (pane number/name and diff labels) uses a high-contrast
+  " accent foreground; the detail text keeps the plain bar foreground. Pick a
+  " dark accent on a light bar and a light accent on a dark bar, so the label
+  " stays readable regardless of the colorscheme.
+  if s:color_is_light(attrs['bg#'], attrs.bg)
+    let accent = {'fg#': '#003a7a', 'fg': '18'}
+  else
+    let accent = {'fg#': '#ffd75f', 'fg': '221'}
+  endif
+  if has_key(user, 'accent')
+    let pair = s:color_pair(user.accent, [accent.fg, accent['fg#']])
+    let accent.fg = pair[0]
+    let accent['fg#'] = pair[1]
+  endif
+
+  let colors = printf('ctermfg=%s ctermbg=%s guifg=%s guibg=%s',
+        \ attrs.fg, attrs.bg, attrs['fg#'], attrs['bg#'])
+  let accent_colors = printf('ctermfg=%s ctermbg=%s guifg=%s guibg=%s',
+        \ accent.fg, attrs.bg, accent['fg#'], attrs['bg#'])
+  execute 'highlight GitChangesPaneBar ' . colors
+  execute 'highlight GitChangesPaneBarIndex ' . accent_colors
+        \ . ' cterm=bold gui=bold'
+  execute 'highlight GitChangesPaneBarName ' . accent_colors
+        \ . ' cterm=bold gui=bold'
+  execute 'highlight GitChangesPaneBarInfo ' . colors
+  execute 'highlight GitChangesPaneBarLabel ' . accent_colors
+        \ . ' cterm=bold gui=bold'
+  execute 'highlight GitChangesPaneBarPath ' . colors
+  execute 'highlight GitChangesPaneBarFill ' . colors
 endfunction
 
 function! s:output_message(lines) abort
@@ -134,18 +243,227 @@ function! s:update_statusline(state) abort
       continue
     endif
 
-    let text = printf('%%#GitChangesPaneIndex#%s%%#GitChangesPaneName# %s',
+    let text = printf('%%#GitChangesPaneBarIndex#%s%%#GitChangesPaneBarName# %s',
           \ number, s:pane_label(kind))
     let detail = s:pane_state_text(a:state, kind)
     if !empty(detail)
-      let text .= printf('%%#GitChangesPaneInfo# %%<· %s',
+      let text .= printf('%%#GitChangesPaneBarInfo# %%<· %s',
             \ substitute(detail, '%', '%%', 'g'))
     endif
-    let text .= '%#GitChangesPaneStatus#'
+    let text .= '%#GitChangesPaneBarFill#'
     if getwinvar(winid, '&statusline') !=# text
       call win_execute(winid, 'let &l:statusline = ' . string(text))
     endif
   endfor
+endfunction
+
+" Current branch name and its ahead/behind/gone markers, for statuslines.
+function! s:current_branch_summary(state) abort
+  let branch = ''
+  let sync = ''
+  for ref in get(a:state, 'refs', [])
+    if get(ref, 'current', 0)
+      let branch = ref.name
+      let sync = s:branch_sync_text(ref)
+      break
+    endif
+  endfor
+  if empty(branch)
+    let branch = s:current_branch(a:state.root)
+  endif
+  return [branch, sync]
+endfunction
+
+" The status pane's own statusline: repository directory, current branch and
+" its sync state. Drawn without a background color, like the other panes.
+function! s:status_window_statusline(state) abort
+  if !get(g:, 'git_changes_statusline', 1)
+    return
+  endif
+  call s:init_statusline_highlights()
+
+  let [branch, sync] = s:current_branch_summary(a:state)
+  let detail = fnamemodify(a:state.root, ':~') . '  ' . branch . sync
+  let text = '%#GitChangesPaneBarIndex#0%#GitChangesPaneBarName# Status'
+        \ . printf('%%#GitChangesPaneBarInfo# %%<· %s',
+        \          substitute(detail, '%', '%%', 'g'))
+        \ . '%#GitChangesPaneBarFill#'
+
+  let winid = get(a:state, 'status_win', 0)
+  if s:win_exists(winid) && getwinvar(winid, '&statusline') !=# text
+    call win_execute(winid, 'let &l:statusline = ' . string(text))
+  endif
+endfunction
+
+" Detailed lines for a commit, the working tree, or a compare range.
+function! s:commit_detail_lines(state, entry) abort
+  let entry = a:entry
+  let lines = []
+  let files_loaded = get(a:state, 'files_entry', '') ==# s:entry_key(entry)
+
+  if entry.kind ==# 'worktree'
+    call add(lines, '# WORK  Working tree changes')
+    let [branch, sync] = s:current_branch_summary(a:state)
+    call add(lines, '# Branch: ' . branch . sync)
+    if files_loaded
+      let counts = get(a:state, 'worktree_counts', [])
+      if empty(counts)
+        let counts = s:worktree_summary(a:state.files)
+      endif
+      call add(lines, s:worktree_status_line(counts))
+      call add(lines, '# Changed files: ' . len(a:state.files))
+    else
+      call add(lines, '# Loading working tree changes...')
+    endif
+    for candidate in get(a:state, 'commits', [])
+      if get(candidate, 'kind', '') ==# 'commit'
+        call add(lines, '# HEAD: ' . candidate.short . ' '
+              \ . candidate.subject)
+        break
+      endif
+    endfor
+  elseif entry.kind ==# 'compare'
+    call add(lines, '# CMP  ' . entry.old_label . ' ↔ ' . entry.new_label)
+    call add(lines, '# Base: ' . entry.old_ref)
+    call add(lines, '# Head: ' . entry.new_ref)
+    if files_loaded
+      call add(lines, '# Changed files: ' . len(a:state.files))
+    else
+      call add(lines, '# Loading changed files...')
+    endif
+  else
+    call add(lines, '# commit ' . entry.sha)
+    let author = entry.author
+    if !empty(get(entry, 'email', ''))
+      let author .= ' <' . entry.email . '>'
+    endif
+    call add(lines, '# Author: ' . author)
+    call add(lines, '# Date:   ' . entry.date)
+    call add(lines, '# Subject: ' . entry.subject)
+    if get(entry, 'unpushed', 0)
+      call add(lines, '# Status: not pushed to any remote')
+    endif
+    if files_loaded
+      call add(lines, '# Files:  ' . len(a:state.files) . ' changed')
+    endif
+    for body_line in s:commit_body_lines(a:state, entry)
+      call add(lines, '# ' . body_line)
+    endfor
+  endif
+
+  return lines
+endfunction
+
+" Detailed lines for the branch selected in the branch pane. Remote branches
+" and tags have no upstream/worktree, so they only show what applies.
+function! s:branch_detail_lines(state) abort
+  let ref = s:selected_branch(a:state)
+  if empty(ref)
+    return ['# No branch selected']
+  endif
+
+  let kind = get(ref, 'kind', 'local')
+  let lines = []
+  if kind ==# 'remote'
+    call add(lines, '# Remote branch: ' . ref.name)
+    call add(lines, '# Remote: ' . matchstr(ref.name, '^[^/]\+'))
+  elseif kind ==# 'tag'
+    call add(lines, '# Tag: ' . ref.name)
+  else
+    call add(lines, '# Branch: ' . ref.name)
+    call add(lines, '# Status: '
+          \ . (get(ref, 'current', 0) ? 'current branch' : 'not checked out'))
+    let upstream = get(ref, 'upstream', '')
+    if empty(upstream)
+      call add(lines, '# Upstream: (none)')
+    else
+      call add(lines, '# Upstream: ' . upstream . s:branch_sync_text(ref))
+    endif
+    if get(ref, 'gone', 0)
+      call add(lines, '# Note:   upstream branch is gone')
+    endif
+    let path = get(get(a:state, 'branch_worktrees', {}), ref.name, '')
+    if !empty(path)
+      call add(lines, '# Worktree: ' . fnamemodify(path, ':~'))
+    endif
+  endif
+
+  let tip = get(get(a:state, 'branch_tips', {}), get(ref, 'refname', ''), {})
+  if !empty(tip)
+    call add(lines, '# Tip:    ' . tip.short . ' ' . tip.subject)
+  endif
+  return lines
+endfunction
+
+function! s:status_detail_lines(state) abort
+  if get(a:state, 'detail_mode', 'commit') ==# 'branch'
+    return s:branch_detail_lines(a:state)
+  endif
+
+  let index = get(a:state, 'commit_index', -1)
+  if index < 0 || index >= len(get(a:state, 'commits', []))
+    return ['# ' . get(a:state, 'list_title', ''), '# No commit selected']
+  endif
+  return s:commit_detail_lines(a:state, a:state.commits[index])
+endfunction
+
+" Fetch the tip commit of the selected branch once and cache it, so moving
+" through the branch list stays responsive.
+function! s:ensure_branch_tip(state) abort
+  let ref = s:selected_branch(a:state)
+  if empty(ref)
+    return
+  endif
+
+  let refname = get(ref, 'refname', '')
+  if empty(refname)
+        \ || has_key(get(a:state, 'branch_tips', {}), refname)
+        \ || get(a:state, 'branch_tip_pending', '') ==# refname
+    return
+  endif
+
+  let a:state.branch_tip_pending = refname
+  let token = get(a:state, 'branch_tip_req', 0) + 1
+  let a:state.branch_tip_req = token
+  call s:git_job(a:state, 'branch-tip', 'branch_tip_req', token,
+        \ ['log', '-1', '--format=%h%x1f%s', refname],
+        \ function('s:apply_branch_tip', [a:state, refname, token]))
+endfunction
+
+function! s:apply_branch_tip(state, refname, token, result) abort
+  if a:token != get(a:state, 'branch_tip_req', 0)
+    return
+  endif
+
+  let a:state.branch_tip_pending = ''
+  let parts = split(get(a:result.out, 0, ''), nr2char(31))
+  if len(parts) >= 2
+    let a:state.branch_tips[a:refname] =
+          \ {'short': parts[0], 'subject': parts[1]}
+  else
+    " Cache failures too, so a bad ref is not retried on every redraw.
+    let a:state.branch_tips[a:refname] = {}
+  endif
+  call s:update_status_window(a:state)
+endfunction
+
+" Redraw the status pane from the current selection.
+function! s:update_status_window(state) abort
+  let buf = get(a:state, 'status_buf', -1)
+  let winid = get(a:state, 'status_win', 0)
+  if !bufexists(buf) || !s:win_exists(winid)
+    return
+  endif
+
+  if get(a:state, 'detail_mode', 'commit') ==# 'branch'
+    call s:ensure_branch_tip(a:state)
+  endif
+
+  let changed = s:set_lines(buf, s:status_detail_lines(a:state))
+  if changed && win_getid() != winid
+    call s:set_cursor(winid, 1)
+  endif
+  call s:status_window_statusline(a:state)
 endfunction
 
 function! s:set_status(state, msg, ...) abort
@@ -342,6 +660,10 @@ function! s:job_stop(state, key) abort
   let name = 'job_' . a:key
   if has_key(a:state, name)
     let job = a:state[name]
+    " Drop the entry before waiting on the job: in Neovim jobwait() and
+    " jobstop() can run the exit callback synchronously, and that callback
+    " also removes the entry.
+    call remove(a:state, name)
     if has('nvim')
       if jobwait([job], 0)[0] == -1
         call jobstop(job)
@@ -349,7 +671,6 @@ function! s:job_stop(state, key) abort
     elseif job_status(job) ==# 'run'
       call job_stop(job)
     endif
-    unlet a:state[name]
   endif
   if has_key(a:state, 'jobtok_' . a:key)
     unlet a:state['jobtok_' . a:key]
@@ -465,11 +786,13 @@ function! s:git_job(state, key, token_key, token, args, callback) abort
 endfunction
 
 function! s:cancel_jobs(state) abort
-  for key in ['branch_req', 'commit_req', 'files_req', 'diff_req']
+  for key in ['branch_req', 'branch_tip_req', 'commit_req', 'files_req',
+        \ 'diff_req']
     let a:state[key] = get(a:state, key, 0) + 1
   endfor
-  for key in ['branches', 'commits-log', 'commits-remote', 'commits-unpushed',
-        \ 'files', 'files-body', 'diff-check', 'diff-old', 'diff-new']
+  for key in ['branches', 'branches-worktrees', 'branch-tip', 'commits-log',
+        \ 'commits-remote', 'commits-unpushed', 'files', 'files-body',
+        \ 'diff-check', 'diff-old', 'diff-new']
     call s:job_stop(a:state, key)
   endfor
 endfunction
@@ -706,6 +1029,7 @@ function! s:default_keymaps() abort
         \ 'pane_commits': '2',
         \ 'pane_branches': '3',
         \ 'pane_diff': '4',
+        \ 'pane_status': '0',
         \ 'diff_left': 'H',
         \ 'diff_right': 'L',
         \ 'hunk_next': ']c',
@@ -794,6 +1118,7 @@ function! s:map_left_pane_keys() abort
   call s:map_action('pane_commits', 'goto_left_pane', 2)
   call s:map_action('pane_branches', 'goto_left_pane', 3)
   call s:map_action('pane_diff', 'goto_diff_pane')
+  call s:map_action('pane_status', 'goto_status_pane')
 endfunction
 
 function! s:map_left_action_keys() abort
@@ -858,6 +1183,7 @@ function! s:init_list_buffer(state, kind) abort
   augroup git_changes
     autocmd! CursorMoved <buffer>
     execute 'autocmd CursorMoved <buffer> call ' . s:sid . callback . '()'
+    execute 'autocmd WinEnter <buffer> call ' . s:sid . 'on_pane_enter()'
   augroup END
 endfunction
 
@@ -888,6 +1214,11 @@ function! s:init_diff_buffer(state, side) abort
   call s:map_action('cycle_prev', 'cycle_pane', -1)
   call s:map_open_main()
   call s:map_quit()
+
+  augroup git_changes
+    autocmd! WinEnter <buffer>
+    execute 'autocmd WinEnter <buffer> call ' . s:sid . 'on_pane_enter()'
+  augroup END
 endfunction
 
 function! s:init_branch_buffer(state) abort
@@ -922,9 +1253,30 @@ function! s:init_branch_buffer(state) abort
   augroup git_changes
     autocmd! CursorMoved <buffer>
     execute 'autocmd CursorMoved <buffer> call ' . s:sid . 'on_branch_cursor_moved()'
+    execute 'autocmd WinEnter <buffer> call ' . s:sid . 'on_pane_enter()'
   augroup END
 
   call s:update_statusline(a:state)
+endfunction
+
+" The status pane mirrors the current selection: a commit and its message,
+" the working tree, a compare range, or the selected branch. It is numbered
+" 0 so it can be reached from every pane with the 0 key.
+function! s:init_status_buffer(state) abort
+  let b:git_changes = a:state
+  let b:gc_kind = 'status'
+  call s:setup_list_window()
+  setlocal nowrap
+
+  call s:map_left_pane_keys()
+  call s:map_left_action_keys()
+  call s:map_keys('checkout_branch', ':<C-u>GitChangesBranchCheckout<CR>')
+  call s:map_keys('merge_branch', ':<C-u>GitChangesBranchMerge<CR>')
+  call s:map_action('worktree', 'goto_worktree')
+  call s:map_action('cycle_next', 'cycle_pane', 1)
+  call s:map_action('cycle_prev', 'cycle_pane', -1)
+  call s:map_open_main()
+  call s:map_quit()
 endfunction
 
 function! s:move_cursor(delta) abort
@@ -1075,6 +1427,8 @@ endfunction
 function! s:schedule_commit_select(state, index) abort
   let a:state.commit_index = a:index
   call s:clear_files_state(a:state)
+  let a:state.detail_mode = 'commit'
+  call s:update_status_window(a:state)
   call s:cancel_debounce(a:state, 'file_timer')
   if !s:can_debounce()
     call s:apply_commit_select(a:state)
@@ -1137,7 +1491,8 @@ function! s:cycle_pane(delta) abort
   endif
 
   let windows = [state.files_win, state.commits_win, state.branches_win,
-        \ state.old_win, state.new_win, get(state, 'work_win', 0)]
+        \ state.old_win, state.new_win, get(state, 'work_win', 0),
+        \ get(state, 'status_win', 0)]
   let current = win_getid()
   let target = 0
   for i in range(len(windows))
@@ -1151,6 +1506,10 @@ function! s:cycle_pane(delta) abort
     let winid = windows[target]
     if s:win_exists(winid)
       call win_gotoid(winid)
+      if winid != get(state, 'status_win', 0)
+        call s:sync_detail_mode(state,
+              \ winid == state.branches_win ? 'branch' : 'commit')
+      endif
       return
     endif
     let target = (target + a:delta + len(windows)) % len(windows)
@@ -1182,7 +1541,40 @@ function! s:goto_left_pane(index) abort
   let winid = windows[a:index - 1]
   if winid > 0 && win_id2win(winid) > 0
     call win_gotoid(winid)
+    call s:sync_detail_mode(state, a:index == 3 ? 'branch' : 'commit')
   endif
+endfunction
+
+function! s:goto_status_pane() abort
+  let state = s:cur_state()
+  if empty(state)
+    return
+  endif
+
+  let winid = get(state, 'status_win', 0)
+  if s:win_exists(winid)
+    call win_gotoid(winid)
+  endif
+endfunction
+
+" Switch what the status pane describes without changing the selection.
+function! s:sync_detail_mode(state, mode) abort
+  if get(a:state, 'detail_mode', 'commit') ==# a:mode
+    return
+  endif
+  let a:state.detail_mode = a:mode
+  call s:update_status_window(a:state)
+endfunction
+
+" Entering a pane makes the status window describe that pane's selection.
+function! s:on_pane_enter() abort
+  let state = s:cur_state()
+  if empty(state) || !s:win_exists(get(state, 'status_win', 0))
+    return
+  endif
+
+  call s:sync_detail_mode(state,
+        \ get(b:, 'gc_kind', '') ==# 'branches' ? 'branch' : 'commit')
 endfunction
 
 " The diff pane that receives focus: the new pane (the side users read and
@@ -1206,6 +1598,7 @@ function! s:goto_diff_pane() abort
   let winid = s:diff_pane_win(state)
   if winid > 0
     call win_gotoid(winid)
+    call s:sync_detail_mode(state, 'commit')
   endif
 endfunction
 
@@ -1240,6 +1633,7 @@ function! s:goto_worktree() abort
     return
   endif
   call s:flush_pending(state)
+  call s:sync_detail_mode(state, 'commit')
 
   let branch = s:current_branch(state.root)
   if empty(state.log_range) && (empty(state.log_ref) || state.log_ref ==# branch)
@@ -2630,12 +3024,15 @@ endfunction
 
 function! s:load_branches(state, select_name, ...) abort
   let OnDone = a:0 ? a:1 : 0
+  " Branch tips may have moved, so fetch them again with the new list.
+  let a:state.branch_tips = {}
+  let a:state.branch_tip_pending = ''
   let token = get(a:state, 'branch_req', 0) + 1
   let a:state.branch_req = token
   call s:git_job(a:state, 'branches', 'branch_req', token,
         \ ['for-each-ref', '--sort=-committerdate',
         \  '--format=%(HEAD)%09%(refname)%09%(refname:short)'
-        \  . '%09%(symref)%09%(upstream:track)',
+        \  . '%09%(symref)%09%(upstream:track)%09%(upstream:short)',
         \  'refs/heads', 'refs/remotes', 'refs/tags'],
         \ function('s:apply_branches', [a:state, a:select_name, OnDone]))
   call s:git_job(a:state, 'branches-worktrees', 'branch_req', token,
@@ -2692,9 +3089,11 @@ function! s:apply_branches(state, select_name, on_done, result) abort
     let [ahead, behind, gone] = s:parse_upstream_track(get(parts, 4, ''))
     call add(refs, {
           \ 'name': name,
+          \ 'refname': refname,
           \ 'kind': refname =~# '^refs/remotes/' ? 'remote'
           \       : refname =~# '^refs/tags/' ? 'tag' : 'local',
           \ 'current': parts[0] ==# '*',
+          \ 'upstream': get(parts, 5, ''),
           \ 'ahead': ahead,
           \ 'behind': behind,
           \ 'gone': gone,
@@ -2779,6 +3178,7 @@ function! s:render_branches(state, wanted) abort
           \ a:state.branch_header + 1 + selected)
   endif
   call s:update_statusline(a:state)
+  call s:update_status_window(a:state)
 endfunction
 
 " Switch the branch list to the next/previous ref group.
@@ -2800,6 +3200,7 @@ function! s:cycle_branch_kind(delta) abort
 
   let state.branch_kind = kinds[next]
   let state.branch_index = -1
+  let state.detail_mode = 'branch'
   if empty(get(state, 'refs', []))
     call s:load_branches(state, '')
     return
@@ -2859,6 +3260,8 @@ function! s:on_branch_cursor_moved() abort
   endif
 
   let state.branch_index = index
+  let state.detail_mode = 'branch'
+  call s:update_status_window(state)
 endfunction
 
 function! s:apply_branch() abort
@@ -3193,8 +3596,10 @@ function! s:commit_body_lines(state, entry) abort
 endfunction
 
 function! s:files_header_lines(state, entry) abort
+  " Commit messages, authors, dates and bodies are shown in the status pane;
+  " this header only identifies what the file list belongs to.
   let lines = a:entry.kind ==# 'commit'
-        \ ? ['# ' . a:entry.short]
+        \ ? ['# commit ' . a:entry.short]
         \ : ['# ' . a:entry.short . '  ' . s:truncate(a:entry.subject, 90)]
 
   if a:entry.kind ==# 'worktree'
@@ -3208,7 +3613,7 @@ function! s:files_header_lines(state, entry) abort
       call add(lines, '# r:refresh d:discard o:open gd:diff ?:hide')
       call add(lines, '# Esc:worktree yy:path cc:commit cn:new co:switch M:merge')
       call add(lines, '# C:edit p:pull P:push')
-      call add(lines, '# J/K:scroll ]c/[c:hunk 1/2/3/4:panes Tab/S-Tab')
+      call add(lines, '# J/K:scroll ]c/[c:hunk 1/2/3/4:panes 0:status Tab/S-Tab')
       call add(lines, '# H/L:scroll diff left/right')
     endif
   elseif a:entry.kind ==# 'compare'
@@ -3216,26 +3621,14 @@ function! s:files_header_lines(state, entry) abort
     if a:state.show_help
       call add(lines, '# t:tree r:refresh ?:hide yy:path Esc:worktree')
       call add(lines, '# cc:commit cn:new co:switch M:merge C:edit p:pull P:push')
-      call add(lines, '# J/K:scroll ]c/[c:hunk 1/2/3/4:panes Tab/S-Tab')
+      call add(lines, '# J/K:scroll ]c/[c:hunk 1/2/3/4:panes 0:status Tab/S-Tab')
       call add(lines, '# H/L:scroll diff left/right')
     endif
-  else
-    let author = a:entry.author
-    if !empty(get(a:entry, 'email', ''))
-      let author .= ' <' . a:entry.email . '>'
-    endif
-    call add(lines, '# Author: ' . s:truncate(author, 90))
-    call add(lines, '# Date:   ' . a:entry.date)
-    call add(lines, '# ' . s:truncate(a:entry.subject, 90))
-    for body_line in s:commit_body_lines(a:state, a:entry)
-      call add(lines, '# ' . body_line)
-    endfor
-    if a:state.show_help
-      call add(lines, '# t:tree r:refresh ?:hide yy:path Esc:worktree')
-      call add(lines, '# cc:commit cn:new co:switch M:merge C:edit p:pull P:push')
-      call add(lines, '# J/K:scroll ]c/[c:hunk 1/2/3/4:panes Tab/S-Tab')
-      call add(lines, '# H/L:scroll diff left/right')
-    endif
+  elseif a:state.show_help
+    call add(lines, '# t:tree r:refresh ?:hide yy:path Esc:worktree')
+    call add(lines, '# cc:commit cn:new co:switch M:merge C:edit p:pull P:push')
+    call add(lines, '# J/K:scroll ]c/[c:hunk 1/2/3/4:panes 0:status Tab/S-Tab')
+    call add(lines, '# H/L:scroll diff left/right')
   endif
 
   return lines
@@ -3375,6 +3768,7 @@ function! s:render_files(state, entry, files) abort
   let lines = header_lines + body
   call s:set_lines(a:state.files_buf, lines)
   call s:update_statusline(a:state)
+  call s:update_status_window(a:state)
 endfunction
 
 function! s:file_index_line(state, index) abort
@@ -3447,6 +3841,7 @@ function! s:render_commits(state) abort
 
   call s:set_lines(a:state.commits_buf, lines)
   call s:update_statusline(a:state)
+  call s:update_status_window(a:state)
 endfunction
 
 " mode: 'initial' resets to the first page, 'reload' keeps the pages already
@@ -3678,6 +4073,7 @@ function! s:after_body_prefetch(state, entry, OnDone, token, result) abort
     call add(lines, '...')
   endif
   let a:entry.body_lines = lines
+  call s:update_status_window(a:state)
   call s:start_files_job(a:state, a:entry, a:OnDone, a:token)
 endfunction
 
@@ -3848,8 +4244,18 @@ function! s:load_side_buffer(state, side, path, lines, detect_filetype, label) a
         \ . s:fold_level())
   call s:init_statusline_highlights()
   let label = substitute(a:label, '%', '%%', 'g')
+  let split_at = stridx(label, ' ')
+  if split_at > 0
+    let lead = strpart(label, 0, split_at)
+    let rest = strpart(label, split_at)
+  else
+    let lead = label
+    let rest = ''
+  endif
   call win_execute(winid, 'let &l:statusline = ' . string(
-        \ '%#GitChangesPaneInfo#' . label . '%#GitChangesPaneStatus#'))
+        \ '%#GitChangesPaneBarLabel#' . lead
+        \ . '%#GitChangesPaneBarPath#' . rest
+        \ . '%#GitChangesPaneBarFill#'))
   if content_changed || path_changed
     call s:set_cursor(winid, 1)
   endif
@@ -4257,6 +4663,8 @@ function! s:select_commit(state, index) abort
 
   call s:cancel_pending(a:state)
   call s:clear_files_state(a:state)
+  let a:state.detail_mode = 'commit'
+  call s:update_status_window(a:state)
   call s:set_commit_cursor(a:state, a:index)
   let entry = a:state.commits[a:index]
   call s:load_files(a:state, entry,
@@ -4312,7 +4720,9 @@ function! s:show_no_commits(state) abort
   call s:show_side_message(a:state, ['(no commits)'])
   call s:set_cursor(a:state.commits_win, 1)
   call s:set_cursor(a:state.files_win, 1)
+  let a:state.detail_mode = 'commit'
   call s:update_statusline(a:state)
+  call s:update_status_window(a:state)
 endfunction
 
 
@@ -4477,12 +4887,18 @@ function! s:new_state(root, parsed, id) abort
         \ 'new_buf': -1,
         \ 'work_buf': -1,
         \ 'branches_buf': -1,
+        \ 'status_buf': -1,
         \ 'files_win': 0,
         \ 'commits_win': 0,
         \ 'old_win': 0,
         \ 'new_win': 0,
         \ 'work_win': 0,
         \ 'branches_win': 0,
+        \ 'status_win': 0,
+        \ 'detail_mode': 'commit',
+        \ 'branch_tips': {},
+        \ 'branch_tip_pending': '',
+        \ 'branch_tip_req': 0,
         \ 'file_timer': -1,
         \ 'commit_timer': -1,
         \ 'refresh_timer': -1,
@@ -4507,10 +4923,16 @@ function! s:open_tab(root, parsed, tabnr) abort
   let t:git_changes = state
   call add(s:instances, state)
 
+  " Right side: the two diff panes sit above a status pane that spans both
+  " of them, so build the status split before splitting the diff panes.
   let top_left_win = win_getid()
   rightbelow vsplit
-  let old_win = win_getid()
+  let right_win = win_getid()
+  belowright split
+  let status_win = win_getid()
+  call win_gotoid(right_win)
   rightbelow vsplit
+  let old_win = right_win
   let new_win = win_getid()
   call win_gotoid(top_left_win)
   belowright split
@@ -4535,6 +4957,12 @@ function! s:open_tab(root, parsed, tabnr) abort
   let state.branches_buf = s:new_scratch(
         \ printf('[GitChanges %d] Branches', next_id), 'gitchanges')
   call s:init_branch_buffer(state)
+
+  call win_gotoid(status_win)
+  let state.status_win = win_getid()
+  let state.status_buf = s:new_scratch(
+        \ printf('[GitChanges %d] Status', next_id), 'gitchanges')
+  call s:init_status_buffer(state)
 
   call win_gotoid(old_win)
   let state.old_win = win_getid()
@@ -4564,6 +4992,7 @@ function! s:open_tab(root, parsed, tabnr) abort
         \ function('s:after_initial_commits', [state]))
 
   let state.updating = 0
+  call s:update_status_window(state)
   call win_gotoid(state.files_win)
 endfunction
 
@@ -4588,6 +5017,7 @@ function! s:apply_layout(state) abort
   if !s:win_exists(a:state.files_win)
         \ || !s:win_exists(a:state.commits_win)
         \ || !s:win_exists(a:state.branches_win)
+        \ || !s:win_exists(get(a:state, 'status_win', 0))
         \ || !s:win_exists(a:state.old_win)
         \ || !s:win_exists(a:state.new_win)
     return
@@ -4622,6 +5052,15 @@ function! s:apply_layout(state) abort
   endif
   call win_execute(a:state.branches_win, 'silent! resize ' . branch_height)
   call win_execute(a:state.files_win, 'silent! resize ' . files_height)
+
+  " The status pane spans the right column; give it its fixed height and let
+  " the diff panes above absorb the rest.
+  let status_win = get(a:state, 'status_win', 0)
+  let right_total = getwininfo(a:state.old_win)[0].height
+        \ + getwininfo(status_win)[0].height + 1
+  let status_height = max([1, min([
+        \ s:opt_int('git_changes_status_height', 6), right_total - 5])])
+  call win_execute(status_win, 'silent! resize ' . status_height)
 endfunction
 
 function! s:on_vim_resized() abort
@@ -4666,6 +5105,9 @@ function! s:quit_state(state) abort
   if empty(wins)
     let wins = win_findbuf(state.branches_buf)
   endif
+  if empty(wins)
+    let wins = win_findbuf(get(state, 'status_buf', -1))
+  endif
 
   if !empty(wins)
     let tabwin = win_id2tabwin(wins[0])
@@ -4676,7 +5118,8 @@ function! s:quit_state(state) abort
   endif
 
   for buf in [state.files_buf, state.commits_buf, state.old_buf,
-        \ state.new_buf, get(state, 'work_buf', -1), state.branches_buf]
+        \ state.new_buf, get(state, 'work_buf', -1), state.branches_buf,
+        \ get(state, 'status_buf', -1)]
     if bufexists(buf)
       execute 'silent! bwipeout! ' . buf
     endif

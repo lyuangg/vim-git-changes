@@ -492,7 +492,8 @@ fi
 assert_eq "main toggle worktree" "$(value main-toggle worktree)" "$(value main-toggle new0)"
 assert_eq "main toggle index" "$(value main-toggle index)" "$(value main-toggle new1)"
 assert_eq "main toggle back" "$(value main-toggle worktree)" "$(value main-toggle new2)"
-assert_string_contains "main toggle status" "INDEX a.txt" "$(value main-toggle status1)"
+assert_string_contains "main toggle status" "GitChangesPaneBarLabel#INDEX" "$(value main-toggle status1)"
+assert_string_contains "main toggle status path" "a.txt" "$(value main-toggle status1)"
 
 assert_eq "main discard before" "$(value main-discard worktree)" "$(value main-discard before)"
 assert_eq "main discard cancel" "$(value main-discard worktree)" "$(value main-discard cancel)"
