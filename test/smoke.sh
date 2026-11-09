@@ -169,6 +169,30 @@ call win_gotoid(st.files_win)
 call Check('files map stage', !empty(maparg('s', 'n')), 's')
 call Check('files map refresh', !empty(maparg('r', 'n')), 'r')
 call Check('files map diff', !empty(maparg('gd', 'n')), 'gd')
+call Check('files ctrl-d unmapped', empty(maparg('<C-d>', 'n')), maparg('<C-d>', 'n'))
+call Check('files ctrl-u unmapped', empty(maparg('<C-u>', 'n')), maparg('<C-u>', 'n'))
+
+normal 4
+call Check('files key 4 jumps to diff', win_getid() == st.new_win,
+      \ string(win_getid()) . ' new=' . st.new_win)
+call win_gotoid(st.old_win)
+normal 4
+call Check('diff key 4 moves to new', win_getid() == st.new_win,
+      \ string(win_getid()) . ' new=' . st.new_win)
+
+call win_gotoid(st.new_win)
+normal 1
+call Check('diff key 1 jumps to files', win_getid() == st.files_win,
+      \ string(win_getid()) . ' files=' . st.files_win)
+call win_gotoid(st.new_win)
+normal 2
+call Check('diff key 2 jumps to commits', win_getid() == st.commits_win,
+      \ string(win_getid()) . ' commits=' . st.commits_win)
+call win_gotoid(st.new_win)
+normal 3
+call Check('diff key 3 jumps to branches', win_getid() == st.branches_win,
+      \ string(win_getid()) . ' branches=' . st.branches_win)
+call win_gotoid(st.files_win)
 
 " Exercise the generated stage/unstage mapping arguments.
 normal s

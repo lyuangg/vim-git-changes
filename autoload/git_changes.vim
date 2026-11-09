@@ -646,8 +646,6 @@ function! s:default_keymaps() abort
         \ 'staged_view': 'dS',
         \ 'open_file': 'o',
         \ 'diff_file': 'gd',
-        \ 'scroll_half_down': '<C-d>',
-        \ 'scroll_half_up': '<C-u>',
         \ 'copy_file': 'yy',
         \ 'copy_commit': 'yy',
         \ 'copy_branch': 'yy',
@@ -670,6 +668,7 @@ function! s:default_keymaps() abort
         \ 'pane_files': '1',
         \ 'pane_commits': '2',
         \ 'pane_branches': '3',
+        \ 'pane_diff': '4',
         \ 'diff_left': 'H',
         \ 'diff_right': 'L',
         \ 'quit': 'q',
@@ -755,6 +754,7 @@ function! s:map_left_pane_keys() abort
   call s:map_action('pane_files', 'goto_left_pane', 1)
   call s:map_action('pane_commits', 'goto_left_pane', 2)
   call s:map_action('pane_branches', 'goto_left_pane', 3)
+  call s:map_action('pane_diff', 'goto_diff_pane')
 endfunction
 
 function! s:map_left_action_keys() abort
@@ -800,8 +800,6 @@ function! s:init_list_buffer(state, kind) abort
     call s:map_action('file_discard', 'discard_current')
     call s:map_action('open_file', 'open_file')
     call s:map_action('diff_file', 'open_file_diff_for_current')
-    call s:map_action('scroll_half_down', 'scroll_diff_half', 1)
-    call s:map_action('scroll_half_up', 'scroll_diff_half', -1)
     call s:map_action('copy_file', 'copy_file_path')
     call s:map_action('diff_left', 'scroll_diff_horizontal', -1)
     call s:map_action('diff_right', 'scroll_diff_horizontal', 1)
@@ -839,6 +837,7 @@ function! s:init_diff_buffer(state, side) abort
   call s:map_action('push', 'push_current')
   call s:map_action('new_branch', 'new_branch')
   call s:map_action('commit_editor', 'commit_with_editor')
+  call s:map_left_pane_keys()
   call s:map_action('cycle_next', 'cycle_pane', 1)
   call s:map_action('cycle_prev', 'cycle_pane', -1)
   call s:map_open_main()
@@ -943,25 +942,6 @@ function! s:scroll_diff(delta) abort
     return
   endif
   call s:scroll_diff_by(winid, a:delta, 1)
-endfunction
-
-" Scroll the right-hand diff by half a page.
-function! s:scroll_diff_half(delta) abort
-  let state = s:cur_state()
-  if empty(state)
-    return
-  endif
-
-  let winid = s:diff_scroll_window(state)
-  if winid <= 0
-    return
-  endif
-  let info = getwininfo(winid)
-  let lines_to_scroll = empty(info) ? 1 : info[0].height / 2
-  if lines_to_scroll < 1
-    let lines_to_scroll = 1
-  endif
-  call s:scroll_diff_by(winid, a:delta, lines_to_scroll)
 endfunction
 
 function! s:debounce_delay() abort
@@ -1152,6 +1132,23 @@ function! s:goto_left_pane(index) abort
   if winid > 0 && win_id2win(winid) > 0
     call win_gotoid(winid)
   endif
+endfunction
+
+" Jump to the right-hand diff pane. Prefer the new pane (the side users read
+" and act on), then the work pane shown for conflicts, then the old pane.
+function! s:goto_diff_pane() abort
+  let state = s:cur_state()
+  if empty(state)
+    return
+  endif
+
+  let windows = [state.new_win, get(state, 'work_win', 0), state.old_win]
+  for winid in windows
+    if winid > 0 && win_id2win(winid) > 0
+      call win_gotoid(winid)
+      return
+    endif
+  endfor
 endfunction
 
 " Jump back to the working tree changes from any commit or compare view.
@@ -2543,7 +2540,7 @@ function! s:apply_branches(state, select_name, on_done, result) abort
   if get(a:state, 'branch_show_help', 0)
     let km = s:keymaps()
     call extend(header, [
-          \ '# j/k:select Enter:show 1/2/3 Tab/S-Tab',
+          \ '# j/k:select Enter:show 1/2/3/4 Tab/S-Tab',
           \ '# ' . km.new_branch . ':new ' . km.commit . ':commit '
           \     . km.commit_editor . ':edit',
           \ '# ' . km.pull . ':pull ' . km.push . ':push '
@@ -2965,7 +2962,7 @@ function! s:files_header_lines(state, entry) abort
       call add(lines, '# r:refresh d:discard o:open gd:diff ?:hide')
       call add(lines, '# Esc:worktree yy:path cc:commit cb:new')
       call add(lines, '# C:edit p:pull P:push')
-      call add(lines, '# J/K:scroll C-d/u:half 1/2/3 Tab/S-Tab')
+      call add(lines, '# J/K:scroll 1/2/3/4:panes Tab/S-Tab')
       call add(lines, '# H/L:scroll diff left/right')
     endif
   elseif a:entry.kind ==# 'compare'
@@ -2973,7 +2970,7 @@ function! s:files_header_lines(state, entry) abort
     if a:state.show_help
       call add(lines, '# t:tree r:refresh ?:hide yy:path Esc:worktree')
       call add(lines, '# cc:commit cb:new C:edit p:pull P:push')
-      call add(lines, '# J/K:scroll C-d/u:half 1/2/3 Tab/S-Tab')
+      call add(lines, '# J/K:scroll 1/2/3/4:panes Tab/S-Tab')
       call add(lines, '# H/L:scroll diff left/right')
     endif
   else
@@ -2990,7 +2987,7 @@ function! s:files_header_lines(state, entry) abort
     if a:state.show_help
       call add(lines, '# t:tree r:refresh ?:hide yy:path Esc:worktree')
       call add(lines, '# cc:commit cb:new C:edit p:pull P:push')
-      call add(lines, '# J/K:scroll C-d/u:half 1/2/3 Tab/S-Tab')
+      call add(lines, '# J/K:scroll 1/2/3/4:panes Tab/S-Tab')
       call add(lines, '# H/L:scroll diff left/right')
     endif
   endif

@@ -198,7 +198,7 @@ open-file actions are unavailable.
 | `j` / `k` | Move between files |
 | `J` / `K` | Scroll the diff |
 | `H` / `L` | Scroll the diff left / right |
-| `Ctrl-d` / `Ctrl-u` | Scroll the diff by half a page |
+| `4` | Jump to the diff pane |
 | `t` | Toggle list/tree view |
 | `?` | Show/hide help |
 | `Esc` | Go back to the working tree changes |
@@ -366,8 +366,6 @@ let g:git_changes_keymaps = {
 | `staged_view` | `dS` |
 | `open_file` | `o` |
 | `diff_file` | `gd` |
-| `scroll_half_down` | `<C-d>` |
-| `scroll_half_up` | `<C-u>` |
 | `copy_file` | `yy` |
 | `copy_commit` | `yy` |
 | `copy_branch` | `yy` |
@@ -390,4 +388,5 @@ let g:git_changes_keymaps = {
 | `pane_files` | `1` |
 | `pane_commits` | `2` |
 | `pane_branches` | `3` |
+| `pane_diff` | `4` |
 | `quit` | `q` |
