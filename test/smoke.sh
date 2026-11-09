@@ -169,6 +169,12 @@ call Check('main commits loaded', len(st.commits) >= 2, len(st.commits))
 call Check('main files loaded', len(st.files) == 2,
       \ len(st.files) . ' [' . join(map(copy(st.files), 'v:val.path'), ',') . ']')
 
+let commit_lines = filter(getbufline(st.commits_buf, 1, '$'),
+      \ 'v:val =~# "second$"')
+call Check('commit list author column',
+      \ !empty(commit_lines) && commit_lines[0] =~# '^\s*\S\+\s\+smoke\s\+second$',
+      \ join(commit_lines, ' / '))
+
 call win_gotoid(st.files_win)
 call Check('files map stage', !empty(maparg('s', 'n')), 's')
 call Check('files map refresh', !empty(maparg('r', 'n')), 'r')

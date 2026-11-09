@@ -296,6 +296,9 @@ let g:git_changes_branches_height = 8
 " Commits loaded per page (press L to load the next batch)
 let g:git_changes_max_commits = 200
 
+" Width of the author column in the commit list, in cells (0 hides it)
+let g:git_changes_author_width = 12
+
 " Exclude merge commits from the commit list (0 = show them)
 let g:git_changes_exclude_merges = 0
 

@@ -276,6 +276,9 @@ let g:git_changes_branches_height = 8
 " 每页加载多少个 commit（按 L 加载下一批）
 let g:git_changes_max_commits = 200
 
+" commit 列表中作者列的宽度（按显示宽度计算，0 = 隐藏）
+let g:git_changes_author_width = 12
+
 " 是否排除 merge commit（0 = 显示）
 let g:git_changes_exclude_merges = 0
 

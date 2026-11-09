@@ -221,6 +221,41 @@ function! s:truncate(text, max) abort
   return strcharpart(a:text, 0, a:max - 3) . '...'
 endfunction
 
+" Truncate {text} to {width} display cells, ending with an ellipsis when it
+" does not fit. Cells rather than characters keep East Asian names aligned.
+function! s:truncate_cells(text, width) abort
+  if a:width < 2 || strdisplaywidth(a:text) <= a:width
+    return a:text
+  endif
+
+  let out = ''
+  for char in split(a:text, '\zs')
+    if strdisplaywidth(out . char) > a:width - 1
+      break
+    endif
+    let out .= char
+  endfor
+  return out . '…'
+endfunction
+
+" Author column width in display cells; 0 hides the column.
+function! s:author_width() abort
+  let value = get(g:, 'git_changes_author_width', 12)
+  return type(value) == type(0) && value >= 0 ? value : 12
+endfunction
+
+" {entry}'s author padded to the column width, followed by two spaces.
+" Empty when the entry has no author or the column is hidden.
+function! s:author_column(entry) abort
+  let width = s:author_width()
+  let author = get(a:entry, 'author', '')
+  if width <= 0 || empty(author)
+    return ''
+  endif
+  let author = s:truncate_cells(author, width)
+  return author . repeat(' ', width - strdisplaywidth(author)) . '  '
+endfunction
+
 let s:repo_root_cache = {}
 
 " Worktree root for {dir}, found without spawning git: walk up until a .git
@@ -3232,7 +3267,7 @@ function! s:render_commits(state) abort
             \ . s:truncate(entry.old_label . ' ↔ ' . entry.new_label, 88))
     else
       call add(lines, prefix . entry.short . '  '
-            \ . s:truncate(entry.subject, 88))
+            \ . s:author_column(entry) . s:truncate(entry.subject, 88))
     endif
   endfor
   if get(a:state, 'commit_loaded', 0) == 0 && !empty(a:state.commits)
