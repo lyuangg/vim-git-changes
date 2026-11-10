@@ -558,8 +558,8 @@ endfunction
 
 " Author column width in display cells; 0 hides the column.
 function! s:author_width() abort
-  let value = get(g:, 'git_changes_author_width', 12)
-  return type(value) == type(0) && value >= 0 ? value : 12
+  let value = get(g:, 'git_changes_author_width', 8)
+  return type(value) == type(0) && value >= 0 ? value : 8
 endfunction
 
 " {entry}'s author padded to the column width, followed by two spaces.

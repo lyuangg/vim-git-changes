@@ -327,7 +327,7 @@ let g:git_changes_statusline_colors = {
 let g:git_changes_max_commits = 200
 
 " Width of the author column in the commit list, in cells (0 hides it)
-let g:git_changes_author_width = 12
+let g:git_changes_author_width = 8
 
 " Exclude merge commits from the commit list (0 = show them)
 let g:git_changes_exclude_merges = 0

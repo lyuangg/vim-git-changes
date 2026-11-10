@@ -306,7 +306,7 @@ let g:git_changes_statusline_colors = {
 let g:git_changes_max_commits = 200
 
 " commit 列表中作者列的宽度（按显示宽度计算，0 = 隐藏）
-let g:git_changes_author_width = 12
+let g:git_changes_author_width = 8
 
 " 是否排除 merge commit（0 = 显示）
 let g:git_changes_exclude_merges = 0
