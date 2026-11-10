@@ -488,6 +488,7 @@ function! s:report(state, msg, kind) abort
     call s:err(a:msg)
   else
     echomsg 'GitChanges: ' . a:msg
+    redraw
   endif
 endfunction
 
@@ -1757,10 +1758,13 @@ function! s:prompt_input(prompt, ...) abort
     return value
   endif
   let text = a:0 ? a:1 : ''
-  if a:0 > 1 && !empty(a:2)
-    return input(a:prompt, text, a:2)
-  endif
-  return input(a:prompt, text)
+  let value = a:0 > 1 && !empty(a:2)
+        \ ? input(a:prompt, text, a:2)
+        \ : input(a:prompt, text)
+  " input() leaves the prompt on the command line; redraw before the next
+  " message so the two are not shown on the same line.
+  redraw
+  return value
 endfunction
 
 function! s:has_staged_changes(root, paths) abort
