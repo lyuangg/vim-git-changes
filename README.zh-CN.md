@@ -204,6 +204,7 @@ set statusline+=%{GitChangesBlameLine()}
 | `S` | stage 所有工作区改动（包括未跟踪文件） |
 | `U` | unstage 所有已暂存改动 |
 | `-` | stage 或 unstage 文件 |
+| `dS` | 在暂存区视图（HEAD vs index）和工作区 diff（index vs 工作区）之间切换 |
 | `d` | 丢弃未暂存改动，或删除未跟踪文件 |
 | `o` | 在新标签页打开当前文件 |
 | `gd` | 打开当前文件的可编辑 diff（在 diff 面板里也可用） |

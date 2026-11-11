@@ -3614,11 +3614,10 @@ function! s:files_header_lines(state, entry) abort
     call add(lines, s:worktree_status_line(counts))
     if a:state.show_help
       call add(lines, '# s:stage u:unstage -:toggle S/U:all t:tree')
-      call add(lines, '# r:refresh d:discard o:open gd:diff ?:hide')
+      call add(lines, '# r:refresh d:discard o:open gd:diff dS:staged ?:hide')
       call add(lines, '# Esc:worktree yy:path cc:commit cn:new co:switch M:merge')
       call add(lines, '# C:edit p:pull P:push')
       call add(lines, '# J/K:scroll ]c/[c:hunk 1/2/3/4:panes 0:status Tab/S-Tab')
-      call add(lines, '# H/L:scroll diff left/right')
     endif
   elseif a:entry.kind ==# 'compare'
     call add(lines, '# Range: ' . a:state.list_title)
@@ -3626,13 +3625,11 @@ function! s:files_header_lines(state, entry) abort
       call add(lines, '# t:tree r:refresh ?:hide yy:path Esc:worktree')
       call add(lines, '# cc:commit cn:new co:switch M:merge C:edit p:pull P:push')
       call add(lines, '# J/K:scroll ]c/[c:hunk 1/2/3/4:panes 0:status Tab/S-Tab')
-      call add(lines, '# H/L:scroll diff left/right')
     endif
   elseif a:state.show_help
     call add(lines, '# t:tree r:refresh ?:hide yy:path Esc:worktree')
     call add(lines, '# cc:commit cn:new co:switch M:merge C:edit p:pull P:push')
     call add(lines, '# J/K:scroll ]c/[c:hunk 1/2/3/4:panes 0:status Tab/S-Tab')
-    call add(lines, '# H/L:scroll diff left/right')
   endif
 
   return lines

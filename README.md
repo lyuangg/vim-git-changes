@@ -210,6 +210,7 @@ open-file actions are unavailable.
 | `S` | Stage all working tree changes (including untracked files) |
 | `U` | Unstage all staged changes |
 | `-` | Stage or unstage file |
+| `dS` | Toggle between the staged view (HEAD vs index) and the working tree diff (index vs worktree) |
 | `d` | Discard unstaged changes, or delete an untracked file |
 | `o` | Open the current file in a new tab (also in diff windows) |
 | `gd` | Open the editable file diff for the selected file (also in diff panes) |
