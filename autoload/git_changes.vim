@@ -2767,6 +2767,14 @@ function! s:refresh_after_push(state) abort
   let index = a:state.commit_index
   let keep_path = s:current_file_path(a:state)
 
+  " The push moved the upstream, so the ahead/behind markers in the branch
+  " pane and the statusline are stale until the refs are read again.
+  let keep_branch = ''
+  if a:state.branch_index >= 0 && a:state.branch_index < len(a:state.branches)
+    let keep_branch = a:state.branches[a:state.branch_index].name
+  endif
+  call s:load_branches(a:state, keep_branch)
+
   call s:load_commits(a:state, 'reload',
         \ function('s:after_push_reload', [a:state, index, keep_path]))
 endfunction
