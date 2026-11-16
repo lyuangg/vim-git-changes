@@ -185,7 +185,7 @@ value synchronously.
 | `D` | Discard unstaged changes (read-only panes) |
 | `dS` | Toggle the staged view (read-only panes) |
 | `cc` / `C` | Commit, or commit with an editor (read-only panes) |
-| `o` | Open the file in a tab (read-only panes) |
+| `o` / `e` | Open the file in a tab (read-only panes) |
 | `Tab` / `S-Tab` | Move to the new / old pane (read-only panes) |
 
 When comparing two refs, the file diff is read-only: stage, discard, commit, and
@@ -212,7 +212,7 @@ open-file actions are unavailable.
 | `-` | Stage or unstage file |
 | `dS` | Toggle between the staged view (HEAD vs index) and the working tree diff (index vs worktree) |
 | `d` | Discard unstaged changes, or delete an untracked file |
-| `o` | Open the current file in a new tab (also in diff windows) |
+| `o` / `e` | Open the current file in a new tab (also in diff windows) |
 | `gd` | Open the editable file diff for the selected file (also in diff panes) |
 | `yy` | Copy the absolute file path |
 | `cc` | Commit staged changes |
@@ -389,6 +389,9 @@ let g:git_changes_keymaps = {
   \ }
 ```
 
+An action also accepts a list of keys. The default `open_file`, for
+example, binds both `o` and `e`: `'open_file': ['o', 'e']`.
+
 | Action | Default |
 | --- | --- |
 | `toggle_tree` | `t` |
@@ -401,7 +404,7 @@ let g:git_changes_keymaps = {
 | `file_discard` | `d` |
 | `file_discard_diff` | `D` |
 | `staged_view` | `dS` |
-| `open_file` | `o` |
+| `open_file` | `o` / `e` |
 | `diff_file` | `gd` |
 | `hunk_next` | `]c` |
 | `hunk_prev` | `[c` |

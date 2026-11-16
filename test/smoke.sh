@@ -392,6 +392,16 @@ call Check('branches co unchanged',
       \ maparg('co', 'n') !~# 'GitChangesBranchCheckout', maparg('co', 'n'))
 call win_gotoid(st.files_win)
 
+" o and e both open the selected file; e still edits messages in commits.
+call Check('files map o', maparg('o', 'n') =~# 'open_file',
+      \ maparg('o', 'n'))
+call Check('files map e', maparg('e', 'n') =~# 'open_file',
+      \ maparg('e', 'n'))
+call win_gotoid(st.commits_win)
+call Check('commits map e edits message',
+      \ maparg('e', 'n') =~# 'edit_commit_message', maparg('e', 'n'))
+call win_gotoid(st.files_win)
+
 let g:git_changes_input_override = g:sametip
 normal co
 call WaitMain()

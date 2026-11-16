@@ -1003,7 +1003,7 @@ function! s:default_keymaps() abort
         \ 'file_discard': 'd',
         \ 'file_discard_diff': 'D',
         \ 'staged_view': 'dS',
-        \ 'open_file': 'o',
+        \ 'open_file': ['o', 'e'],
         \ 'diff_file': 'gd',
         \ 'copy_file': 'yy',
         \ 'copy_commit': 'yy',
@@ -3622,7 +3622,7 @@ function! s:files_header_lines(state, entry) abort
     call add(lines, s:worktree_status_line(counts))
     if a:state.show_help
       call add(lines, '# s:stage u:unstage -:toggle S/U:all t:tree')
-      call add(lines, '# r:refresh d:discard o:open gd:diff dS:staged ?:hide')
+      call add(lines, '# r:refresh d:discard o/e:open gd:diff dS:staged ?:hide')
       call add(lines, '# Esc:worktree yy:path cc:commit cn:new co:switch M:merge')
       call add(lines, '# C:edit p:pull P:push')
       call add(lines, '# J/K:scroll ]c/[c:hunk 1/2/3/4:panes 0:status Tab/S-Tab')

@@ -180,7 +180,7 @@ set statusline+=%{GitChangesBlameLine()}
 | `D` | 丢弃未暂存改动（只读面板） |
 | `dS` | 切换暂存区视图（只读面板） |
 | `cc` / `C` | 提交，或用编辑器提交（只读面板） |
-| `o` | 在新标签页打开文件（只读面板） |
+| `o` / `e` | 在新标签页打开文件（只读面板） |
 | `Tab` / `S-Tab` | 切到新 / 旧面板（只读面板） |
 
 对比两个 ref 时，文件 diff 是只读的：stage、discard、commit 和打开文件等操作不可用。
@@ -206,7 +206,7 @@ set statusline+=%{GitChangesBlameLine()}
 | `-` | stage 或 unstage 文件 |
 | `dS` | 在暂存区视图（HEAD vs index）和工作区 diff（index vs 工作区）之间切换 |
 | `d` | 丢弃未暂存改动，或删除未跟踪文件 |
-| `o` | 在新标签页打开当前文件 |
+| `o` / `e` | 在新标签页打开当前文件 |
 | `gd` | 打开当前文件的可编辑 diff（在 diff 面板里也可用） |
 | `yy` | 复制文件绝对路径 |
 | `cc` | commit 已暂存内容 |
@@ -367,6 +367,9 @@ let g:git_changes_keymaps = {
   \ }
 ```
 
+动作的值也可以是一个按键列表。例如默认的 `open_file` 同时绑定了 `o` 和
+`e`：`'open_file': ['o', 'e']`。
+
 | 动作 | 默认按键 |
 | --- | --- |
 | `toggle_tree` | `t` |
@@ -379,7 +382,7 @@ let g:git_changes_keymaps = {
 | `file_discard` | `d` |
 | `file_discard_diff` | `D` |
 | `staged_view` | `dS` |
-| `open_file` | `o` |
+| `open_file` | `o` / `e` |
 | `diff_file` | `gd` |
 | `hunk_next` | `]c` |
 | `hunk_prev` | `[c` |
