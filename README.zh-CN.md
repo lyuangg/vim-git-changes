@@ -69,8 +69,6 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 :GitChanges v1.0 v2.0
 ```
 
-文件列表中的帮助默认隐藏，按 `?` 显示，再按 `?` 隐藏。
-
 主 GitChanges 窗口和单文件 diff 窗口默认都会折叠未改动区域。按 `zR`
 展开完整文件，用 `zo` / `zc` 折叠或展开当前块，或设置
 `g:git_changes_fold = 0` 关闭折叠。
@@ -196,7 +194,7 @@ set statusline+=%{GitChangesBlameLine()}
 | `4` | 跳到 diff 窗口 |
 | `0` | 跳到状态窗口 |
 | `t` | 列表 / tree 样式切换 |
-| `?` | 显示 / 隐藏帮助 |
+| `?` | 显示 / 隐藏浮动帮助窗口 |
 | `Esc` | 回到工作区改动 |
 | `r` | 刷新文件、commit 和分支（在 diff 面板里也可用） |
 | `s` | stage 文件 |
@@ -228,6 +226,7 @@ set statusline+=%{GitChangesBlameLine()}
 | `e` | 编辑未 push commit 的 message |
 | `L` | 列表显示 `200+` 时，再加载下一批 commit |
 | `yy` | 复制完整 commit hash |
+| `?` | 显示 / 隐藏浮动帮助窗口 |
 | `Esc` | 回到工作区改动 |
 
 
@@ -245,7 +244,7 @@ set statusline+=%{GitChangesBlameLine()}
 | `cn` | 从所选分支新建分支并切换过去 |
 | `d` | 删除所选本地分支 |
 | `yy` | 复制分支名 |
-| `?` | 显示 / 隐藏帮助（默认隐藏） |
+| `?` | 显示 / 隐藏浮动帮助窗口 |
 
 ### 状态窗口
 
@@ -259,6 +258,7 @@ set statusline+=%{GitChangesBlameLine()}
 | `Esc` | 回到工作区改动 |
 | `0` | 跳到状态窗口（任意窗口可用） |
 | `1` / `2` / `3` / `4` | 跳到文件 / commit / 分支 / diff 窗口 |
+| `?` | 显示 / 隐藏浮动帮助窗口 |
 
 默认是深色背景配浅色文字；可用下面的 `g:git_changes_statusline_colors` 修改。
 

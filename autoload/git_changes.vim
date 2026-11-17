@@ -1157,10 +1157,10 @@ function! s:init_list_buffer(state, kind) abort
   call s:map_keys('merge_branch', ':<C-u>GitChangesBranchMerge<CR>')
   call s:map_open_main()
   call s:map_action('worktree', 'goto_worktree')
+  call s:map_fixed_action('?', 'help_toggle_current')
 
   if a:kind ==# 'files'
     call s:map_action('toggle_tree', 'toggle_tree')
-    call s:map_fixed_action('?', 'toggle_help')
     call s:map_action('stage', 'stage_current', '"stage"')
     call s:map_action('unstage', 'stage_current', '"unstage"')
     call s:map_action('stage_all', 'stage_all')
@@ -1214,6 +1214,7 @@ function! s:init_diff_buffer(state, side) abort
   call s:map_action('cycle_next', 'cycle_pane', 1)
   call s:map_action('cycle_prev', 'cycle_pane', -1)
   call s:map_open_main()
+  call s:map_fixed_action('?', 'help_toggle_current')
   call s:map_quit()
 
   augroup git_changes
@@ -1234,7 +1235,7 @@ function! s:init_branch_buffer(state) abort
   call s:map_action('hunk_next', 'goto_diff_hunk', 1)
   call s:map_action('hunk_prev', 'goto_diff_hunk', -1)
   call s:map_action('refresh', 'refresh_all')
-  call s:map_fixed_action('?', 'toggle_branch_help')
+  call s:map_fixed_action('?', 'help_toggle_current')
   call s:map_action('checkout_branch', 'checkout_branch')
   call s:map_action('merge_branch', 'merge_branch')
   call s:map_action('merge_abort', 'merge_abort')
@@ -1277,6 +1278,7 @@ function! s:init_status_buffer(state) abort
   call s:map_action('cycle_next', 'cycle_pane', 1)
   call s:map_action('cycle_prev', 'cycle_pane', -1)
   call s:map_open_main()
+  call s:map_fixed_action('?', 'help_toggle_current')
   call s:map_quit()
 endfunction
 
@@ -1700,6 +1702,282 @@ function! s:toggle_tree() abort
 
   let state.file_tree = !state.file_tree
   call s:rerender_files(state)
+endfunction
+
+" ============================================================================
+" Help window
+"
+" '?' opens a floating window with the keys for the current list instead of
+" growing the pane header. The window only displays text: the cursor stays in
+" the pane, so '?' still toggles it. Editors without popup or floating windows
+" keep the inline help.
+" ============================================================================
+
+function! s:help_floats_supported() abort
+  if has('nvim')
+    return has('nvim-0.9') && exists('*nvim_open_win')
+  endif
+  return v:version >= 900 && exists('*popup_create')
+endfunction
+
+function! s:help_key(action) abort
+  let value = get(s:keymaps(), a:action, '')
+  if type(value) == type([])
+    return join(value, ' / ')
+  endif
+  return type(value) == type('') ? value : ''
+endfunction
+
+function! s:help_lines(kind) abort
+  let titles = {
+        \ 'files': 'Files',
+        \ 'commits': 'Commits',
+        \ 'branches': 'Branches',
+        \ 'diff': 'Diff',
+        \ 'status': 'Status',
+        \ }
+  let lines = ['# GitChanges Help',
+        \ '# ' . get(titles, a:kind, 'Files')]
+
+  let hunk = s:help_key('hunk_next') . ' / ' . s:help_key('hunk_prev')
+  let sides = s:help_key('diff_left') . ' / ' . s:help_key('diff_right')
+  let stage = s:help_key('stage') . ' / ' . s:help_key('unstage') . ' / '
+        \ . s:help_key('toggle_stage')
+  let stage_all = s:help_key('stage_all') . ' / ' . s:help_key('unstage_all')
+
+  if a:kind ==# 'branches'
+    let entries = [
+          \ ['j / k', 'Move between branches'],
+          \ [s:help_key('branch_group_next') . ' / '
+          \  . s:help_key('branch_group_prev'),
+          \  'Local branches / remotes / tags'],
+          \ [s:help_key('apply_branch'), 'Show the selected branch'],
+          \ [s:help_key('merge_abort'), 'Abort the merge'],
+          \ [s:help_key('branch_delete'), 'Delete the branch'],
+          \ [s:help_key('copy_branch'), 'Copy the branch name'],
+          \ [s:help_key('worktree'), 'Back to the working tree'],
+          \ ]
+  elseif a:kind ==# 'commits'
+    let entries = [
+          \ ['j / k', 'Move between commits'],
+          \ ['J / K', 'Scroll the diff'],
+          \ [hunk, 'Next / previous change'],
+          \ [s:help_key('edit_message'), 'Edit an unpushed commit message'],
+          \ [s:help_key('load_more'), 'Load more commits'],
+          \ [s:help_key('copy_commit'), 'Copy the commit hash'],
+          \ [s:help_key('refresh'), 'Refresh'],
+          \ [s:help_key('worktree'), 'Back to the working tree'],
+          \ ]
+  elseif a:kind ==# 'diff'
+    let entries = [
+          \ ['J / K', 'Scroll the diff'],
+          \ [hunk, 'Next / previous change'],
+          \ [sides, 'Scroll the diff left / right'],
+          \ [stage, 'Stage / unstage / toggle file'],
+          \ [stage_all, 'Stage / unstage everything'],
+          \ [s:help_key('file_discard_diff'), 'Discard unstaged changes'],
+          \ [s:help_key('staged_view'), 'Toggle staged view'],
+          \ [s:help_key('open_file'), 'Open the file in a tab'],
+          \ [s:help_key('diff_file'), 'Editable file diff'],
+          \ [s:help_key('refresh'), 'Refresh'],
+          \ ]
+  elseif a:kind ==# 'status'
+    let entries = [
+          \ [s:help_key('worktree'), 'Back to the working tree'],
+          \ ]
+    call add(lines, '  Details for the selected commit or branch')
+  else
+    let entries = [
+          \ ['j / k', 'Move between files'],
+          \ ['J / K', 'Scroll the diff'],
+          \ [hunk, 'Next / previous change'],
+          \ [sides, 'Scroll the diff left / right'],
+          \ [stage, 'Stage / unstage / toggle file'],
+          \ [stage_all, 'Stage / unstage everything'],
+          \ [s:help_key('file_discard'), 'Discard unstaged changes'],
+          \ [s:help_key('staged_view'), 'Toggle staged view'],
+          \ [s:help_key('open_file'), 'Open the file in a tab'],
+          \ [s:help_key('diff_file'), 'Editable file diff'],
+          \ [s:help_key('copy_file'), 'Copy the file path'],
+          \ [s:help_key('toggle_tree'), 'Toggle list / tree view'],
+          \ [s:help_key('refresh'), 'Refresh'],
+          \ [s:help_key('worktree'), 'Back to the working tree'],
+          \ ]
+  endif
+
+  for [key, text] in entries
+    call add(lines, printf('  %-14s %s', key, text))
+  endfor
+
+  call extend(lines, [
+        \ '',
+        \ '# Panes and commands',
+        \ printf('  %-14s %s', '1 / 2 / 3 / 4',
+        \        'Files / commits / branches / diff'),
+        \ printf('  %-14s %s', '0', 'Status pane'),
+        \ printf('  %-14s %s', 'Tab / S-Tab', 'Cycle panes'),
+        \ printf('  %-14s %s',
+        \   s:help_key('commit') . ' / ' . s:help_key('commit_editor'),
+        \   'Commit / commit in an editor'),
+        \ printf('  %-14s %s', s:help_key('new_branch'), 'New branch'),
+        \ printf('  %-14s %s',
+        \   s:help_key('checkout_branch') . ' / ' . s:help_key('merge_branch'),
+        \   'Checkout / merge a branch'),
+        \ printf('  %-14s %s',
+        \   s:help_key('pull') . ' / ' . s:help_key('push'), 'Pull / push'),
+        \ printf('  %-14s %s', s:help_key('open_main'), 'Open GitChanges'),
+        \ printf('  %-14s %s', s:help_key('quit'), 'Close GitChanges'),
+        \ printf('  %-14s %s', '?', 'Close this help'),
+        \ ])
+  return lines
+endfunction
+
+" A scratch buffer for the help popup. s:new_scratch() would replace the
+" buffer of the current window, which is a pane of the view.
+function! s:new_help_buffer(state) abort
+  let buf = bufadd(printf('[GitChanges %d] Help', a:state.id))
+  call bufload(buf)
+  for [opt, value] in [
+        \ ['buftype', 'nofile'], ['bufhidden', 'hide'], ['swapfile', 0],
+        \ ['buflisted', 0], ['modifiable', 1],
+        \ ]
+    call setbufvar(buf, '&' . opt, value)
+  endfor
+  call setbufvar(buf, '&filetype', 'gitchanges')
+  return buf
+endfunction
+
+" Content position (one based screen cells) and size of the help window.
+function! s:help_geometry(lines) abort
+  let width = 24
+  for line in a:lines
+    let width = max([width, strdisplaywidth(line) + 2])
+  endfor
+  let width = min([width, max([10, &columns - 4])])
+  let height = min([max([3, len(a:lines)]), max([3, &lines - 4])])
+  let x = max([2, (&columns - width) / 2 + 1])
+  let y = max([3, (&lines - height) / 2 + 1])
+  return [x, y, width, height]
+endfunction
+
+function! s:help_show(state, kind) abort
+  let lines = s:help_lines(a:kind)
+  if !bufexists(get(a:state, 'help_buf', -1))
+    let a:state.help_buf = s:new_help_buffer(a:state)
+  endif
+  call s:set_lines(a:state.help_buf, lines)
+  call setbufvar(a:state.help_buf, '&modifiable', 0)
+
+  let [x, y, width, height] = s:help_geometry(lines)
+  let winid = get(a:state, 'help_win', 0)
+
+  if s:win_exists(winid)
+    " Recenter an open help window, e.g. after a terminal resize.
+    if has('nvim')
+      call nvim_win_set_config(winid, {
+            \ 'relative': 'editor',
+            \ 'row': max([0, y - 2]),
+            \ 'col': max([0, x - 2]),
+            \ 'width': width,
+            \ 'height': height,
+            \ })
+    else
+      call popup_move(winid, {
+            \ 'line': max([0, y - 1]),
+            \ 'col': max([0, x - 1]),
+            \ 'minwidth': width, 'maxwidth': width,
+            \ 'minheight': height, 'maxheight': height,
+            \ })
+    endif
+    return
+  endif
+
+  if has('nvim')
+    let a:state.help_win = nvim_open_win(a:state.help_buf, v:false, {
+          \ 'relative': 'editor',
+          \ 'row': max([0, y - 2]),
+          \ 'col': max([0, x - 2]),
+          \ 'width': width,
+          \ 'height': height,
+          \ 'style': 'minimal',
+          \ 'focusable': v:false,
+          \ 'border': 'rounded',
+          \ 'title': [[' GitChanges Help ', 'Title']],
+          \ 'title_pos': 'left',
+          \ 'zindex': 100,
+          \ })
+  else
+    let a:state.help_win = popup_create(a:state.help_buf, {
+          \ 'line': max([0, y - 1]),
+          \ 'col': max([0, x - 1]),
+          \ 'minwidth': width, 'maxwidth': width,
+          \ 'minheight': height, 'maxheight': height,
+          \ 'wrap': 0,
+          \ 'scrollbar': 0,
+          \ 'border': [1, 1, 1, 1],
+          \ 'title': ' GitChanges Help ',
+          \ 'zindex': 100,
+          \ })
+  endif
+  let a:state.help_kind = a:kind
+endfunction
+
+function! s:help_close(state) abort
+  let winid = get(a:state, 'help_win', 0)
+  if s:win_exists(winid)
+    if has('nvim')
+      call nvim_win_close(winid, v:true)
+    else
+      call popup_close(winid)
+    endif
+  endif
+  let a:state.help_win = 0
+  let a:state.help_kind = ''
+
+  let buf = get(a:state, 'help_buf', -1)
+  if bufexists(buf)
+    execute 'silent! bwipeout! ' . buf
+  endif
+  let a:state.help_buf = -1
+endfunction
+
+function! s:help_toggle(state, kind) abort
+  if s:win_exists(get(a:state, 'help_win', 0))
+    let same = get(a:state, 'help_kind', '') ==# a:kind
+    call s:help_close(a:state)
+    if same
+      return
+    endif
+  endif
+  call s:help_show(a:state, a:kind)
+endfunction
+
+" Which help section matches the pane that has the cursor.
+function! s:help_kind_for_current() abort
+  let kind = get(b:, 'gc_kind', '')
+  return kind ==# 'commits' || kind ==# 'branches'
+        \ || kind ==# 'diff' || kind ==# 'status' ? kind : 'files'
+endfunction
+
+" '?' in any pane of the view: toggle the floating help window. Editors
+" without floating windows keep the inline help for the file and branch lists.
+function! s:help_toggle_current() abort
+  let state = s:cur_state()
+  if empty(state)
+    return
+  endif
+
+  let kind = s:help_kind_for_current()
+  if s:help_floats_supported()
+    call s:help_toggle(state, kind)
+    return
+  endif
+
+  if kind ==# 'files'
+    call s:toggle_help()
+  elseif kind ==# 'branches'
+    call s:toggle_branch_help()
+  endif
 endfunction
 
 function! s:toggle_help() abort
@@ -4913,6 +5191,9 @@ function! s:new_state(root, parsed, id) abort
         \ 'refresh_timer': -1,
         \ 'status': '',
         \ 'status_kind': 'info',
+        \ 'help_win': 0,
+        \ 'help_buf': -1,
+        \ 'help_kind': '',
         \ }
 endfunction
 
@@ -5076,6 +5357,9 @@ function! s:on_vim_resized() abort
   for state in copy(s:instances)
     if s:state_alive(state)
       call s:apply_layout(state)
+      if s:win_exists(get(state, 'help_win', 0))
+        call s:help_show(state, get(state, 'help_kind', 'files'))
+      endif
     endif
   endfor
 endfunction
@@ -5101,6 +5385,7 @@ function! s:quit_state(state) abort
   call s:cancel_pending(state)
   call s:cancel_refresh(state)
   call s:cancel_jobs(state)
+  call s:help_close(state)
   let wins = win_findbuf(state.files_buf)
   if empty(wins)
     let wins = win_findbuf(state.commits_buf)

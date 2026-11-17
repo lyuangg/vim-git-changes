@@ -72,8 +72,6 @@ cp -r vim-git-changes ~/.local/share/nvim/site/pack/plugins/start/vim-git-change
 :GitChanges v1.0 v2.0
 ```
 
-Help is hidden by default in the file list. Press `?` to show it and `?` again to hide it.
-
 Diff panes fold unchanged blocks by default, both in the main browser and in
 the file diff views. Press `zR` to show the full files, use `zo` / `zc` to
 toggle one fold, or set `g:git_changes_fold = 0` to keep everything expanded.
@@ -202,7 +200,7 @@ open-file actions are unavailable.
 | `4` | Jump to the diff pane |
 | `0` | Jump to the status pane |
 | `t` | Toggle list/tree view |
-| `?` | Show/hide help |
+| `?` | Show/hide the floating help window |
 | `Esc` | Go back to the working tree changes |
 | `r` | Refresh files, commits, and branches (also in diff panes) |
 | `s` | Stage file |
@@ -234,6 +232,7 @@ open-file actions are unavailable.
 | `e` | Edit an unpushed commit message |
 | `L` | Load the next batch of commits when the list says `200+` |
 | `yy` | Copy the full commit hash |
+| `?` | Show/hide the floating help window |
 | `Esc` | Go back to the working tree changes |
 
 
@@ -251,7 +250,7 @@ open-file actions are unavailable.
 | `cn` | Create a branch from the selected branch and switch to it |
 | `d` | Delete the selected local branch |
 | `yy` | Copy the branch name |
-| `?` | Show/hide help (hidden by default) |
+| `?` | Show/hide the floating help window |
 
 ### Status pane
 
@@ -265,6 +264,7 @@ open-file actions are unavailable.
 | `Esc` | Go back to the working tree changes |
 | `0` | Jump to the status pane (from any pane) |
 | `1` / `2` / `3` / `4` | Jump to the files / commits / branches / diff pane |
+| `?` | Show/hide the floating help window |
 
 The default bar uses a dark slate background with light text; see
 `g:git_changes_statusline_colors` below to change it.

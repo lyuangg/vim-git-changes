@@ -192,6 +192,56 @@ call Check('main commits loaded', len(st.commits) >= 2, len(st.commits))
 call Check('main files loaded', len(st.files) == 2,
       \ len(st.files) . ' [' . join(map(copy(st.files), 'v:val.path'), ',') . ']')
 
+" --- help window ----------------------------------------------------------
+" ? opens a floating help window for the focused list; keys stay in the pane.
+call win_gotoid(st.files_win)
+normal ?
+let help_win = get(st, 'help_win', 0)
+let help_lines = getbufline(get(st, 'help_buf', -1), 1, '$')
+let help_float = has('nvim')
+      \ ? get(nvim_win_get_config(help_win), 'relative', '') ==# 'editor'
+      \ : !empty(popup_getpos(help_win))
+call Check('help opens as a float',
+      \ !empty(getwininfo(help_win)) && help_float
+      \ && index(help_lines, '# GitChanges Help') >= 0,
+      \ string(help_lines[:2]))
+call Check('help keeps the pane focus', win_getid() == st.files_win,
+      \ string(win_getid()) . ' files=' . st.files_win)
+call Check('help lists file keys',
+      \ match(help_lines, 'Stage / unstage / toggle') >= 0,
+      \ string(help_lines[:4]))
+call Check('inline help stays hidden',
+      \ match(getbufline(st.files_buf, 1, st.files_header), 's:stage') < 0,
+      \ string(getbufline(st.files_buf, 1, st.files_header)))
+let v:errmsg = ''
+doautocmd VimResized
+call Check('resize with help open',
+      \ empty(v:errmsg) && !empty(getwininfo(help_win)), v:errmsg)
+normal ?
+call Check('help closes', empty(getwininfo(help_win)),
+      \ string(getwininfo(help_win)))
+
+" ? works in every pane of the view.
+for [name, win, kind] in [
+      \ ['commits', st.commits_win, 'commits'],
+      \ ['branches', st.branches_win, 'branches'],
+      \ ['diff', st.new_win, 'diff'],
+      \ ['status', st.status_win, 'status'],
+      \ ]
+  call win_gotoid(win)
+  let help_map = maparg('?', 'n')
+  normal ?
+  let pane_help = get(st, 'help_win', 0)
+  call Check('help in ' . name,
+        \ !empty(help_map) && !empty(getwininfo(pane_help))
+        \ && get(st, 'help_kind', '') ==# kind,
+        \ 'map=' . help_map . ' kind=' . get(st, 'help_kind', ''))
+  normal ?
+  call Check('help closes in ' . name,
+        \ empty(getwininfo(pane_help)), string(pane_help))
+endfor
+call win_gotoid(st.files_win)
+
 " --- status pane ----------------------------------------------------------
 " The status pane is six lines high, numbered 0 in its statusline, and
 " describes the current selection.
