@@ -1035,6 +1035,8 @@ function! s:default_keymaps() abort
         \ 'diff_right': 'L',
         \ 'hunk_next': ']c',
         \ 'hunk_prev': '[c',
+        \ 'file_next': '<C-n>',
+        \ 'file_prev': '<C-p>',
         \ 'quit': 'q',
         \ }
 endfunction
@@ -1151,6 +1153,8 @@ function! s:init_list_buffer(state, kind) abort
   call s:map_action('refresh', 'refresh_all')
   call s:map_action('cycle_next', 'cycle_pane', 1)
   call s:map_action('cycle_prev', 'cycle_pane', -1)
+  call s:map_action('file_next', 'move_file', 1)
+  call s:map_action('file_prev', 'move_file', -1)
   call s:map_left_pane_keys()
   call s:map_left_action_keys()
   call s:map_keys('checkout_branch', ':<C-u>GitChangesBranchCheckout<CR>')
@@ -1213,6 +1217,8 @@ function! s:init_diff_buffer(state, side) abort
   call s:map_left_pane_keys()
   call s:map_action('cycle_next', 'cycle_pane', 1)
   call s:map_action('cycle_prev', 'cycle_pane', -1)
+  call s:map_action('file_next', 'move_file', 1)
+  call s:map_action('file_prev', 'move_file', -1)
   call s:map_open_main()
   call s:map_fixed_action('?', 'help_toggle_current')
   call s:map_quit()
@@ -1242,6 +1248,8 @@ function! s:init_branch_buffer(state) abort
   call s:map_action('apply_branch', 'apply_branch')
   call s:map_action('cycle_next', 'cycle_pane', 1)
   call s:map_action('cycle_prev', 'cycle_pane', -1)
+  call s:map_action('file_next', 'move_file', 1)
+  call s:map_action('file_prev', 'move_file', -1)
   call s:map_left_pane_keys()
   call s:map_left_action_keys()
   call s:map_open_main()
@@ -1277,6 +1285,8 @@ function! s:init_status_buffer(state) abort
   call s:map_action('worktree', 'goto_worktree')
   call s:map_action('cycle_next', 'cycle_pane', 1)
   call s:map_action('cycle_prev', 'cycle_pane', -1)
+  call s:map_action('file_next', 'move_file', 1)
+  call s:map_action('file_prev', 'move_file', -1)
   call s:map_open_main()
   call s:map_fixed_action('?', 'help_toggle_current')
   call s:map_quit()
@@ -1298,6 +1308,31 @@ function! s:move_cursor(delta) abort
   elseif kind ==# 'branches'
     call s:on_branch_cursor_moved()
   endif
+endfunction
+
+" Move the file selection by one and show its diff. Works from the file list
+" and from the diff panes, which share the state's file index.
+function! s:move_file(delta) abort
+  let state = s:cur_state()
+  if empty(state) || empty(state.files)
+    return
+  endif
+
+  let index = s:current_file_index(state)
+  if index < 0
+    let index = state.file_index
+  endif
+  if index < 0
+    return
+  endif
+  let target = index + a:delta
+  if target < 0 || target >= len(state.files)
+    return
+  endif
+
+  let state.file_index = target
+  call s:goto_file_index(state, target)
+  call s:schedule_file_diff(state)
 endfunction
 
 " Pick the diff window to scroll: the side with more content.
@@ -1744,10 +1779,12 @@ function! s:help_lines(kind) abort
   let stage = s:help_key('stage') . ' / ' . s:help_key('unstage') . ' / '
         \ . s:help_key('toggle_stage')
   let stage_all = s:help_key('stage_all') . ' / ' . s:help_key('unstage_all')
+  let file_nav = s:help_key('file_next') . ' / ' . s:help_key('file_prev')
 
   if a:kind ==# 'branches'
     let entries = [
           \ ['j / k', 'Move between branches'],
+          \ [file_nav, 'Next / previous file diff'],
           \ [s:help_key('branch_group_next') . ' / '
           \  . s:help_key('branch_group_prev'),
           \  'Local branches / remotes / tags'],
@@ -1760,6 +1797,7 @@ function! s:help_lines(kind) abort
   elseif a:kind ==# 'commits'
     let entries = [
           \ ['j / k', 'Move between commits'],
+          \ [file_nav, 'Next / previous file diff'],
           \ ['J / K', 'Scroll the diff'],
           \ [hunk, 'Next / previous change'],
           \ [s:help_key('edit_message'), 'Edit an unpushed commit message'],
@@ -1772,6 +1810,7 @@ function! s:help_lines(kind) abort
     let entries = [
           \ ['J / K', 'Scroll the diff'],
           \ [hunk, 'Next / previous change'],
+          \ [file_nav, 'Next / previous file'],
           \ [sides, 'Scroll the diff left / right'],
           \ [stage, 'Stage / unstage / toggle file'],
           \ [stage_all, 'Stage / unstage everything'],
@@ -1783,12 +1822,14 @@ function! s:help_lines(kind) abort
           \ ]
   elseif a:kind ==# 'status'
     let entries = [
+          \ [file_nav, 'Next / previous file diff'],
           \ [s:help_key('worktree'), 'Back to the working tree'],
           \ ]
     call add(lines, '  Details for the selected commit or branch')
   else
     let entries = [
           \ ['j / k', 'Move between files'],
+          \ [file_nav, 'Next / previous file diff'],
           \ ['J / K', 'Scroll the diff'],
           \ [hunk, 'Next / previous change'],
           \ [sides, 'Scroll the diff left / right'],

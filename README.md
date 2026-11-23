@@ -194,6 +194,7 @@ open-file actions are unavailable.
 | Key | Action |
 | --- | --- |
 | `j` / `k` | Move between files |
+| `Ctrl-n` / `Ctrl-p` | Show the next / previous file's diff (also in other panes) |
 | `J` / `K` | Scroll the diff |
 | `]c` / `[c` | Jump to the next / previous diff change |
 | `H` / `L` | Scroll the diff left / right |
@@ -408,6 +409,8 @@ example, binds both `o` and `e`: `'open_file': ['o', 'e']`.
 | `diff_file` | `gd` |
 | `hunk_next` | `]c` |
 | `hunk_prev` | `[c` |
+| `file_next` | `<C-n>` |
+| `file_prev` | `<C-p>` |
 | `copy_file` | `yy` |
 | `copy_commit` | `yy` |
 | `copy_branch` | `yy` |

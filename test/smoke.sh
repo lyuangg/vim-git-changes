@@ -104,6 +104,19 @@ function! WaitMain() abort
   sleep 100m
 endfunction
 
+function! WaitShown(path) abort
+  let n = 0
+  while n < 200
+    if exists('t:git_changes') && !empty(t:git_changes)
+          \ && get(get(t:git_changes, 'shown_file', {}), 'path', '') ==# a:path
+      break
+    endif
+    sleep 20m
+    let n += 1
+  endwhile
+  sleep 50m
+endfunction
+
 function! WaitDiff() abort
   let n = 0
   while n < 200
@@ -280,6 +293,48 @@ call Check('files map refresh', !empty(maparg('r', 'n')), 'r')
 call Check('files map diff', !empty(maparg('gd', 'n')), 'gd')
 call Check('files ctrl-d unmapped', empty(maparg('<C-d>', 'n')), maparg('<C-d>', 'n'))
 call Check('files ctrl-u unmapped', empty(maparg('<C-u>', 'n')), maparg('<C-u>', 'n'))
+call Check('files map ctrl-n', !empty(maparg('<C-n>', 'n')), maparg('<C-n>', 'n'))
+call Check('files map ctrl-p', !empty(maparg('<C-p>', 'n')), maparg('<C-p>', 'n'))
+
+" Ctrl-n / Ctrl-p move to the next / previous file and show its diff.
+let first_path = st.files[0].path
+let second_path = st.files[1].path
+call win_gotoid(st.files_win)
+call cursor(st.files_header + 1, 1)
+execute "normal \<C-n>"
+call WaitShown(second_path)
+call Check('ctrl-n shows next file diff',
+      \ st.file_index == 1 && get(st.shown_file, 'path', '') ==# second_path,
+      \ 'index=' . st.file_index . ' shown=' . get(st.shown_file, 'path', ''))
+call win_gotoid(st.new_win)
+call Check('diff pane map ctrl-p', !empty(maparg('<C-p>', 'n')), maparg('<C-p>', 'n'))
+execute "normal \<C-p>"
+call WaitShown(first_path)
+call Check('ctrl-p shows previous file diff',
+      \ st.file_index == 0 && get(st.shown_file, 'path', '') ==# first_path,
+      \ 'index=' . st.file_index . ' shown=' . get(st.shown_file, 'path', ''))
+
+" The same keys work in every other pane of the view.
+for [name, win] in [['commits', st.commits_win], ['branches', st.branches_win],
+      \ ['status', st.status_win]]
+  call win_gotoid(win)
+  call Check(name . ' map ctrl-n', !empty(maparg('<C-n>', 'n')),
+        \ maparg('<C-n>', 'n'))
+  call Check(name . ' map ctrl-p', !empty(maparg('<C-p>', 'n')),
+        \ maparg('<C-p>', 'n'))
+endfor
+call win_gotoid(st.status_win)
+execute "normal \<C-n>"
+call WaitShown(second_path)
+call Check('status ctrl-n shows next file diff',
+      \ st.file_index == 1 && get(st.shown_file, 'path', '') ==# second_path,
+      \ 'index=' . st.file_index . ' shown=' . get(st.shown_file, 'path', ''))
+call win_gotoid(st.files_win)
+execute "normal \<C-p>"
+call WaitShown(first_path)
+call Check('files ctrl-p returns to first file',
+      \ st.file_index == 0 && get(st.shown_file, 'path', '') ==# first_path,
+      \ 'index=' . st.file_index . ' shown=' . get(st.shown_file, 'path', ''))
 
 normal 4
 call Check('files key 4 jumps to diff', win_getid() == st.new_win,

@@ -188,6 +188,7 @@ set statusline+=%{GitChangesBlameLine()}
 | 按键 | 操作 |
 | --- | --- |
 | `j` / `k` | 切换文件 |
+| `Ctrl-n` / `Ctrl-p` | 查看下一个 / 上一个文件的 diff（在其他面板中也可用） |
 | `J` / `K` | 滚动 diff |
 | `]c` / `[c` | 跳到下一个 / 上一个 diff 改动 |
 | `H` / `L` | 左右滚动 diff |
@@ -386,6 +387,8 @@ let g:git_changes_keymaps = {
 | `diff_file` | `gd` |
 | `hunk_next` | `]c` |
 | `hunk_prev` | `[c` |
+| `file_next` | `<C-n>` |
+| `file_prev` | `<C-p>` |
 | `copy_file` | `yy` |
 | `copy_commit` | `yy` |
 | `copy_branch` | `yy` |
