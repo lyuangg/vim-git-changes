@@ -1011,7 +1011,7 @@ function! s:default_keymaps() abort
         \ 'branch_group_next': ']]',
         \ 'branch_group_prev': '[[',
         \ 'edit_message': 'e',
-        \ 'load_more': 'L',
+        \ 'load_more': 'gl',
         \ 'commit': 'cc',
         \ 'commit_editor': 'C',
         \ 'open_main': 'gs',
@@ -1150,6 +1150,8 @@ function! s:init_list_buffer(state, kind) abort
   call s:map_fixed_action('K', 'scroll_diff', -1)
   call s:map_action('hunk_next', 'goto_diff_hunk', 1)
   call s:map_action('hunk_prev', 'goto_diff_hunk', -1)
+  call s:map_action('diff_left', 'scroll_diff_horizontal', -1)
+  call s:map_action('diff_right', 'scroll_diff_horizontal', 1)
   call s:map_action('refresh', 'refresh_all')
   call s:map_action('cycle_next', 'cycle_pane', 1)
   call s:map_action('cycle_prev', 'cycle_pane', -1)
@@ -1174,8 +1176,6 @@ function! s:init_list_buffer(state, kind) abort
     call s:map_action('open_file', 'open_file')
     call s:map_action('diff_file', 'open_file_diff_for_current')
     call s:map_action('copy_file', 'copy_file_path')
-    call s:map_action('diff_left', 'scroll_diff_horizontal', -1)
-    call s:map_action('diff_right', 'scroll_diff_horizontal', 1)
   elseif a:kind ==# 'commits'
     call s:map_action('copy_commit', 'copy_commit_hash')
     call s:map_action('edit_message', 'edit_commit_message')
@@ -1238,8 +1238,12 @@ function! s:init_branch_buffer(state) abort
   call s:map_fixed_action('k', 'move_cursor', -1)
   call s:map_fixed_action('<Down>', 'move_cursor', 1)
   call s:map_fixed_action('<Up>', 'move_cursor', -1)
+  call s:map_fixed_action('J', 'scroll_diff', 1)
+  call s:map_fixed_action('K', 'scroll_diff', -1)
   call s:map_action('hunk_next', 'goto_diff_hunk', 1)
   call s:map_action('hunk_prev', 'goto_diff_hunk', -1)
+  call s:map_action('diff_left', 'scroll_diff_horizontal', -1)
+  call s:map_action('diff_right', 'scroll_diff_horizontal', 1)
   call s:map_action('refresh', 'refresh_all')
   call s:map_fixed_action('?', 'help_toggle_current')
   call s:map_action('checkout_branch', 'checkout_branch')
@@ -1287,6 +1291,10 @@ function! s:init_status_buffer(state) abort
   call s:map_action('cycle_prev', 'cycle_pane', -1)
   call s:map_action('file_next', 'move_file', 1)
   call s:map_action('file_prev', 'move_file', -1)
+  call s:map_fixed_action('J', 'scroll_diff', 1)
+  call s:map_fixed_action('K', 'scroll_diff', -1)
+  call s:map_action('diff_left', 'scroll_diff_horizontal', -1)
+  call s:map_action('diff_right', 'scroll_diff_horizontal', 1)
   call s:map_open_main()
   call s:map_fixed_action('?', 'help_toggle_current')
   call s:map_quit()
@@ -1784,6 +1792,8 @@ function! s:help_lines(kind) abort
   if a:kind ==# 'branches'
     let entries = [
           \ ['j / k', 'Move between branches'],
+          \ ['J / K', 'Scroll the diff'],
+          \ [sides, 'Scroll the diff left / right'],
           \ [file_nav, 'Next / previous file diff'],
           \ [s:help_key('branch_group_next') . ' / '
           \  . s:help_key('branch_group_prev'),
@@ -1799,6 +1809,7 @@ function! s:help_lines(kind) abort
           \ ['j / k', 'Move between commits'],
           \ [file_nav, 'Next / previous file diff'],
           \ ['J / K', 'Scroll the diff'],
+          \ [sides, 'Scroll the diff left / right'],
           \ [hunk, 'Next / previous change'],
           \ [s:help_key('edit_message'), 'Edit an unpushed commit message'],
           \ [s:help_key('load_more'), 'Load more commits'],
@@ -1822,6 +1833,8 @@ function! s:help_lines(kind) abort
           \ ]
   elseif a:kind ==# 'status'
     let entries = [
+          \ ['J / K', 'Scroll the diff'],
+          \ [sides, 'Scroll the diff left / right'],
           \ [file_nav, 'Next / previous file diff'],
           \ [s:help_key('worktree'), 'Back to the working tree'],
           \ ]

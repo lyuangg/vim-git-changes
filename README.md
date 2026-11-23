@@ -230,8 +230,9 @@ open-file actions are unavailable.
 | --- | --- |
 | `j` / `k` | Move between commits |
 | `J` / `K` | Scroll the diff |
+| `H` / `L` | Scroll the diff left / right |
 | `e` | Edit an unpushed commit message |
-| `L` | Load the next batch of commits when the list says `200+` |
+| `gl` | Load the next batch of commits when the list says `200+` |
 | `yy` | Copy the full commit hash |
 | `?` | Show/hide the floating help window |
 | `Esc` | Go back to the working tree changes |
@@ -242,6 +243,8 @@ open-file actions are unavailable.
 | Key | Action |
 | --- | --- |
 | `j` / `k` | Move branch selection without changing the other panes |
+| `J` / `K` | Scroll the diff |
+| `H` / `L` | Scroll the diff left / right |
 | `<CR>` | Show the selected branch's commits and files |
 | `Esc` | Go back to the working tree changes |
 | `]]` / `[[` | Switch the list between local branches, remote branches, and tags |
@@ -258,6 +261,8 @@ open-file actions are unavailable.
 | Key | Action |
 | --- | --- |
 | `q` | Close the GitChanges tab |
+| `J` / `K` | Scroll the diff |
+| `H` / `L` | Scroll the diff left / right |
 | `cc` / `C` | Commit, or commit with an editor |
 | `co` / `M` | Check out or merge a branch |
 | `cn` | Create a new branch |
@@ -417,7 +422,7 @@ example, binds both `o` and `e`: `'open_file': ['o', 'e']`.
 | `branch_group_next` | `]]` |
 | `branch_group_prev` | `[[` |
 | `edit_message` | `e` |
-| `load_more` | `L` |
+| `load_more` | `gl` |
 | `commit` | `cc` |
 | `commit_editor` | `C` |
 | `open_main` | `gs` |

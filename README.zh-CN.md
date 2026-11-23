@@ -224,8 +224,9 @@ set statusline+=%{GitChangesBlameLine()}
 | --- | --- |
 | `j` / `k` | 切换 commit |
 | `J` / `K` | 滚动 diff |
+| `H` / `L` | 左右滚动 diff |
 | `e` | 编辑未 push commit 的 message |
-| `L` | 列表显示 `200+` 时，再加载下一批 commit |
+| `gl` | 列表显示 `200+` 时，再加载下一批 commit |
 | `yy` | 复制完整 commit hash |
 | `?` | 显示 / 隐藏浮动帮助窗口 |
 | `Esc` | 回到工作区改动 |
@@ -236,6 +237,8 @@ set statusline+=%{GitChangesBlameLine()}
 | 按键 | 操作 |
 | --- | --- |
 | `j` / `k` | 移动分支选择，不改变其他窗口 |
+| `J` / `K` | 滚动 diff |
+| `H` / `L` | 左右滚动 diff |
 | `<CR>` | 显示所选分支的 commit 和文件 |
 | `Esc` | 回到工作区改动 |
 | `]]` / `[[` | 在本地分支、远程分支和标签之间切换列表 |
@@ -252,6 +255,8 @@ set statusline+=%{GitChangesBlameLine()}
 | 按键 | 操作 |
 | --- | --- |
 | `q` | 关闭 GitChanges tab |
+| `J` / `K` | 滚动 diff |
+| `H` / `L` | 左右滚动 diff |
 | `cc` / `C` | 提交，或用编辑器提交 |
 | `co` / `M` | 切换或合并分支 |
 | `cn` | 新建分支 |
@@ -395,7 +400,7 @@ let g:git_changes_keymaps = {
 | `branch_group_next` | `]]` |
 | `branch_group_prev` | `[[` |
 | `edit_message` | `e` |
-| `load_more` | `L` |
+| `load_more` | `gl` |
 | `commit` | `cc` |
 | `commit_editor` | `C` |
 | `open_main` | `gs` |

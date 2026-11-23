@@ -336,6 +336,36 @@ call Check('files ctrl-p returns to first file',
       \ st.file_index == 0 && get(st.shown_file, 'path', '') ==# first_path,
       \ 'index=' . st.file_index . ' shown=' . get(st.shown_file, 'path', ''))
 
+" J / K scroll the diff from every pane except the diff panes.
+for [name, win] in [['files', st.files_win], ['commits', st.commits_win],
+      \ ['branches', st.branches_win], ['status', st.status_win]]
+  call win_gotoid(win)
+  call Check(name . ' map J', !empty(maparg('J', 'n')), maparg('J', 'n'))
+  call Check(name . ' map K', !empty(maparg('K', 'n')), maparg('K', 'n'))
+endfor
+for [name, win] in [['old diff', st.old_win], ['new diff', st.new_win]]
+  call win_gotoid(win)
+  call Check(name . ' J unmapped', empty(maparg('J', 'n')), maparg('J', 'n'))
+  call Check(name . ' K unmapped', empty(maparg('K', 'n')), maparg('K', 'n'))
+endfor
+
+" H / L scroll the diff horizontally from every pane except the diff panes.
+for [name, win] in [['files', st.files_win], ['commits', st.commits_win],
+      \ ['branches', st.branches_win], ['status', st.status_win]]
+  call win_gotoid(win)
+  call Check(name . ' map H', !empty(maparg('H', 'n')), maparg('H', 'n'))
+  call Check(name . ' map L', !empty(maparg('L', 'n')), maparg('L', 'n'))
+endfor
+call win_gotoid(st.commits_win)
+call Check('commits gl loads more',
+      \ maparg('gl', 'n') =~# 'load_more_commits', maparg('gl', 'n'))
+for [name, win] in [['old diff', st.old_win], ['new diff', st.new_win]]
+  call win_gotoid(win)
+  call Check(name . ' H unmapped', empty(maparg('H', 'n')), maparg('H', 'n'))
+  call Check(name . ' L unmapped', empty(maparg('L', 'n')), maparg('L', 'n'))
+endfor
+call win_gotoid(st.files_win)
+
 normal 4
 call Check('files key 4 jumps to diff', win_getid() == st.new_win,
       \ string(win_getid()) . ' new=' . st.new_win)
